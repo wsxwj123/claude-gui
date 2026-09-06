@@ -1534,6 +1534,12 @@ router.post('/chat', async (req, res) => {
     // 运行中的子代理每 ~30s 由其自身模型+缓存分叉出一句现在时进度描述,经 task_progress
     // 的 summary 字段发回(跑不满 30s 的子代理不出摘要,属正常)。
     agentProgressSummaries: true,
+    // r114:停止只停本回合派出的任务,跨回合还活着的后台子代理/工作流不被连带杀。
+    // 必须写在 options 字面量里(不是条件分支):CLI 只认 true、没有"取消声明"的路径,
+    // 重初始化时该键被归为 lost —— 每次新建 query() 都得重新带上;某条路径漏带就静默
+    // 回到 fail-closed 的"interrupt 杀光后台"。恒定常量,不进 chatCompatKey。
+    // 老 CLI(2.1.191)收到这个未知键实测不报错,故不设版本门。
+    perTaskStopAffordance: true,
     permissionMode: sdkPermMode,
     canUseTool: makeCanUseTool(slot),
     // MCP 服务器要用户填表(elicitation)。走与授权卡同一张挂起表 → 停止/进程退出的清卡

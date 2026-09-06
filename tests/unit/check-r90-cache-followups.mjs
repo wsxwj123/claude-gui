@@ -376,10 +376,20 @@ check('B8-1 claudePath 为空(SDK 回落自带 CLI)一律不加 --system-prompt-
   assert.equal(snapshotFlagOn('/usr/bin/claude', true, () => false), false, 'CLI 不认不能加');
   assert.equal(snapshotFlagOn('/usr/bin/claude', true, yes), true);
 });
-check('B8-2 SDK 捆绑 CLI 的版本不支持该 flag,且与 PATH 上装的无关(本机取证)', () => {
+check('B8-2 SDK 捆绑 CLI 的版本(本机取证:与 PATH 上装的无关)', () => {
+  // r114:SDK 升到 0.3.261 后捆绑 CLI 已是 2.1.261(原断言锁的是"≤2.1.24x 不认这个 flag")。
+  // 按本条注释自己的口径改写:读已装 SDK 的真实捆绑版本,断言 ≥ 2.1.257。
+  // 空路径门(B8-1)**本轮不放宽** —— 放宽要真机复核 SDK 自带 CLI 的行为(装机版可能
+  // 还带着旧 SDK),记待办,不在本轮。下面这条就是那道门的回归锁。
   const sdkPkg = JSON.parse(readFileSync(join(root, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'), 'utf8'));
-  assert.ok(/^2\.1\.(19|1\d|2[0-4])/.test(String(sdkPkg.claudeCodeVersion || '')),
-    `SDK 捆绑 CLI 版本变成 ${sdkPkg.claudeCodeVersion} —— 若已 ≥2.1.25x 可以放宽空路径门,先复核`);
+  const v = String(sdkPkg.claudeCodeVersion || '');
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+  assert.ok(m, `读不出 SDK 捆绑 CLI 版本(claudeCodeVersion=${JSON.stringify(v)})`);
+  const cmp = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const min = [2, 1, 257];
+  const ge = cmp[0] > min[0] || (cmp[0] === min[0] && (cmp[1] > min[1] || (cmp[1] === min[1] && cmp[2] >= min[2])));
+  assert.ok(ge, `SDK 捆绑 CLI 版本 ${v} < 2.1.257 —— 依赖没真升,perTaskStopAffordance 不生效`);
+  assert.equal(snapshotFlagOn('', true, () => true), false, '空路径门本轮不放宽(见上面注释)');
 });
 check('B8-3 面板显示口径 = 执行口径(同一个函数、同一个入参)', () => {
   assert.ok(/cliSnapshotSupported: snapshotFlagOn\(resolveSdkClaude\(\), true\)/.test(settingsSrc),
