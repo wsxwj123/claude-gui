@@ -239,8 +239,10 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   const errorText = pick.source === 'snapshot' && snapshot?.error ? String(snapshot.error) : '';
   const cap = resultFull ? 20000 : 4000;
 
+  // data-wf-card:留给真机验收的选择器。不用 data-cgui —— 那个命名空间归皮肤锚点
+  // 注册表(skinAnchors.js)管,不在清单里的挂点会让 check-skin-anchors 变红。
   return (
-    <div data-cgui="workflow-card" className="border border-canvas-deep rounded-lg overflow-hidden bg-canvas animate-fade-up">
+    <div data-wf-card="" className="border border-canvas-deep rounded-lg overflow-hidden bg-canvas animate-fade-up">
       {/* 头:工作流名 · 整体状态 · 规模 · 停止整个工作流 */}
       <div className={`${pad} py-2 flex items-start gap-2.5 bg-canvas-warm/60 border-b border-canvas-deep`}>
         <span className="shrink-0 mt-px w-5 h-5 rounded-md bg-accent-subtle flex items-center justify-center text-ink-muted">
