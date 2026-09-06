@@ -71,7 +71,7 @@ function agentDuration(entry) {
   return null;
 }
 
-function AgentRow({ entry, index, state, onOpen }) {
+function AgentRow({ entry, index, state, onOpen, compact }) {
   const label = clip(entry?.label) || `助手 ${index + 1}`;
   const tokens = fmtTokens(entry?.tokens);
   const dur = agentDuration(entry);
@@ -97,8 +97,8 @@ function AgentRow({ entry, index, state, onOpen }) {
             }`} />}
       </span>
       <span className="flex-1 min-w-0 truncate text-ink">{label}</span>
-      {lastTool && (
-        <span className="hidden sm:block shrink-0 max-w-[9rem] truncate font-mono text-[10px] text-ink-faint" title={lastTool}>
+      {lastTool && !compact && (
+        <span className="min-w-0 max-w-[9rem] truncate font-mono text-[10px] text-ink-faint" title={lastTool}>
           {lastTool}
         </span>
       )}
@@ -155,6 +155,12 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   }, [groups]);
 
   const name = clip(agent?.name || snapshot?.workflowName || toolCall?.input?.name || 'workflow', 80);
+  const meta = [
+    groups.length > 0 ? `${groups.length} 阶段` : null,
+    totals.agents > 0 ? `${totals.agents} 助手` : null,
+    fmtTokens(totals.tokens) ? `${fmtTokens(totals.tokens)} tokens` : null,
+    totals.toolCalls > 0 ? `${totals.toolCalls} 次工具` : null,
+  ].filter(Boolean).join(' · ');
   const canStop = runStatus === 'running' && !!agent;
 
   const stopWorkflow = async (e) => {
@@ -214,7 +220,10 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   // 展开态 = 用户设定 ?? 首次见到该阶段时算出的默认值(算完冻住)。每 10s 一份新进度
   // 表既不能把用户折起来的阶段重新弹开,也不该在阶段跑完那一刻自己收起。
   const anyActive = groups.some((g) => g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, runStatus))));
-  const lastKey = groups.length ? groups[groups.length - 1].key : null;
+  // 全终态时展开最后【一个派过助手的】阶段:阶段是开跑前就全量预告的,收尾时的最后
+  // 一组常常是没派出助手的空阶段,展开它等于把真正有结果的那组藏起来。
+  const withAgents = groups.filter((g) => g.agents.length);
+  const lastKey = (withAgents.length ? withAgents[withAgents.length - 1] : groups[groups.length - 1])?.key ?? null;
   const isOpen = (g) => {
     if (override.has(g.key)) return override.get(g.key);
     if (!foldDefaults.current.has(g.key)) {
@@ -241,14 +250,9 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[12px] text-ink font-body truncate" title={name}>{name}</span>
             <Badge state={runStatus} label={RUN_LABEL[runStatus]} />
-            {runStatus === 'running' && Number.isFinite(agent?.startedAt) && <ElapsedTime startedAt={agent.startedAt} className="!text-[10px]" />}
+            {runStatus === 'running' && Number.isFinite(agent?.startedAt) && <ElapsedTime startedAt={agent.startedAt} />}
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-ink-faint font-body">
-            {groups.length > 0 && <span>{groups.length} 阶段</span>}
-            {totals.agents > 0 && <span>{totals.agents} 助手</span>}
-            {fmtTokens(totals.tokens) && <span className="font-mono tabular-nums">{fmtTokens(totals.tokens)} tokens</span>}
-            {totals.toolCalls > 0 && <span className="font-mono tabular-nums">{totals.toolCalls} 次工具</span>}
-          </div>
+          {meta && <div className="mt-0.5 truncate text-[10px] text-ink-faint font-body" title={meta}>{meta}</div>}
         </div>
         {canStop && (
           <button
@@ -256,7 +260,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
             className="shrink-0 px-1.5 py-px rounded border border-canvas-deep bg-canvas text-[10px] text-ink-muted hover:text-error hover:border-error/40 hover:bg-error/10 transition-colors font-body flex items-center gap-1"
             title="停止整个工作流"
           >
-            <Square size={9} className="fill-current" />停止整个工作流
+            <Square size={9} className="fill-current" />{!compact && '停止整个工作流'}
           </button>
         )}
       </div>
@@ -296,7 +300,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
                   </span>
                   <span className="flex-1 min-w-0 truncate text-[11px] text-ink font-body" title={g.title}>{clip(g.title, 80)}</span>
                   <span className="shrink-0 font-mono text-[10px] text-ink-faint tabular-nums">
-                    {g.agents.length ? `${doneCount}/${g.agents.length}` : '0'}
+                    {doneCount}/{g.agents.length}
                   </span>
                 </button>
                 {open && g.agents.length > 0 && (
@@ -307,6 +311,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
                         entry={a}
                         index={i}
                         state={agentDisplayState(a, runStatus)}
+                        compact={compact}
                         onOpen={() => openAgent(a)}
                       />
                     ))}
