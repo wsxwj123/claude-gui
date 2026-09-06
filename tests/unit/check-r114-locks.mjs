@@ -61,7 +61,7 @@ const CHAT = read('server/routes/chat.js');
 const CHAT_C = stripComments(CHAT);
 const AGENTS = read('server/routes/agents.js');
 const AGENTS_C = stripComments(AGENTS);
-const READER = stripComments(read('server/utils/session-reader.js'));
+const READER = stripComments(read('server/services/session-reader.js'));
 const WFPROG = stripComments(read('server/utils/workflow-progress.js'));
 const PKG = read('package.json');
 
@@ -205,13 +205,13 @@ red('E1-11 agents.js 必须 export const WF_SAFE_ID(供新模块复用同一把�
 });
 
 red('E1-12a session-reader.js 必须按 taskType === \'local_workflow\' 附 workflowRun', () => {
-  assert.ok(READER.length > 0, 'server/utils/session-reader.js 读不到');
+  assert.ok(READER.length > 0, 'server/services/session-reader.js 读不到');
   assert.match(READER, /taskType\s*===\s*['"]local_workflow['"]/);
   assert.match(READER, /workflowRun/);
 });
 
 red('E1-12b session-reader.js 不得把 transcriptDir / scriptPath 放进返回对象', () => {
-  assert.ok(READER.length > 0, 'server/utils/session-reader.js 读不到');
+  assert.ok(READER.length > 0, 'server/services/session-reader.js 读不到');
   assert.equal(/transcriptDir\s*:/.test(READER), false, 'transcriptDir 作为键出现 = 绝对路径透给前端');
   assert.equal(/scriptPath/.test(READER), false, 'scriptPath 一律不许出现在历史返回对象里');
 });
