@@ -24,7 +24,11 @@ import { parseWorkflowLaunchText, parseWorkflowTranscriptDir } from '../utils/wo
 function workflowRunOf(toolUseResult, content) {
   const tur = toolUseResult && typeof toolUseResult === 'object' ? toolUseResult : null;
   const isWorkflow = tur?.taskType === 'local_workflow';
-  const fromText = (!isWorkflow || !tur.runId) ? parseWorkflowLaunchText(content) : null;
+  // 正文兜底只在正文里真有 workflows 路径段时才跑正则:runId 必须来自 `workflows/wf_…`
+  // (契约也要求"正文能解析出 runId"才兜底),这个前置判据不改变结果,但省掉了对每条
+  // 普通 Bash/Read 结果的三遍白扫(大会话几千条 tool_result)。
+  const fromText = (!isWorkflow || !tur.runId) && content.includes('workflows')
+    ? parseWorkflowLaunchText(content) : null;
   if (!isWorkflow && !fromText?.runId) return null;
   const dir = tur?.transcriptDir || fromText?.transcriptDir || null;
   const loc = parseWorkflowTranscriptDir(dir);
