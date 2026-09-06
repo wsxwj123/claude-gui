@@ -24,3 +24,10 @@ M1(按停止只停本回合)、M2(后台子代理与后台 shell 分开单停)�
 
 ## 测试期间事故(如实)
 主会话为 M9 起的 6703 沙箱服务,与 check-r114-server.mjs 自己的端口探测(按 6703→6709 轮询 /api/health,谁应答就当成自己的子进程)冲突,造成该文件 18 条假红;停掉沙箱服务后重跑 120/120 绿;.devflow/test-output-r114-full.txt 记录的第 2 轮全量是在没有任何沙箱服务占用 6703–6709 时跑的。
+
+## 补充(主会话对裁判风险 R1/R3/R4 的核实,2026-09-07 00:30)
+R1 停止核心基线:以 r114 开工基线 17f1b400(master 当时 HEAD)的 server/routes/chat.js 第 2228–2389 行(含 /stop 与 /stop-task 全路径,8308 字符)为准,当前 HEAD 逐字节包含该区间(因上方新增 50 行,起始行移到 2278)。源码锁 E1-8 用 `git show HEAD` 取基线,在工作区干净时确实退化为自比(裁判判断正确),主会话已用上述方法独立核实;该锁的写法记为待办。
+R3 既有 9 个回归测试:自 17f1b400 起 `git diff` 行数逐个为 0(check-stop-background-empty / check-stop-epoch-scope / check-stop-reuse-reset / check-stop-single-task / check-level-reconcile / check-rename-session / check-compat-key-model / check-cron-hold / check-agents-waiting-fields)。tests/ 目录自 17f1b400 以来的改动只有:新增 r114 五个测试文件与夹具、§F 点名的四个既有测试各补断言、check-r90-cache-followups B8-2 随 SDK 升级改为"捆绑 CLI ≥2.1.257"并保留空路径门。
+R4 完整输出:`.devflow/test-output-r114-check-r114-server-full.txt`(120 条逐条 ✓,含 A2-6/A2-12/A2-17)、`…-check-r114-locks-full.txt`(47 条,含 E1-2/E1-8/E2-7e)、`…-check-r114b-client-full.txt`(40 条),均在测试端口无占用时生成。
+R2 端口探测(check-r114-server 认领任何在 6703–6709 应答的进程):记为下一轮待办,本轮不改锁定测试。
+R6 BRIEF E"轮询只针对当前会话、面板关闭即停":这是 v0.2.212 起监控面板既有行为,本轮未改动该逻辑,也无新增用例;作为已知覆盖缺口记录。
