@@ -712,15 +712,20 @@ export function projectWorkflowProgressMessage(m) {
 // 把一行消息送给 SSE:有活跃监听(已 attach)→ 实时写;否则回落 earlyLines 缓冲,
 // 供下次 /stream 重连回放(detach-don't-abort)。
 function deliverLine(slot, line) {
-  if (slot.listeners.size) { for (const fn of slot.listeners) { try { fn(line); } catch {} } }
+  // r114:工作流进度行(system/task_progress 带 workflow_progress)在【投递前】整表投影,
+  // 砍掉 promptPreview(写给助手的整段提示词原文)等白名单外的键。放在这里而不是调用处:
+  // 所有投递路径都从这一个口子出去,写在口子上才没有漏网的分支。只换 workflow_progress
+  // 一个键,其余字段原样;`line` 本身一个字不动(调用方的落盘/回放/detach 全走原文)。
+  let wfProgressMsg = null;
+  if (line.includes('workflow_progress')) {
+    try { wfProgressMsg = projectWorkflowProgressMessage(JSON.parse(line)); } catch {}
+  }
+  const outLine = wfProgressMsg ? JSON.stringify(wfProgressMsg) : line;
+  if (slot.listeners.size) { for (const fn of slot.listeners) { try { fn(outLine); } catch {} } }
   else {
-    // r114:工作流进度行是每 ~10s 一份的全量快照(73 助手档 45–125KB/条)。重放旧快照
-    // 没有价值(下一份马上就到),却能把 5000 行的 earlyLines 撑到几百 MB 常驻 ——
-    // 故这类行【不进缓冲】,只走下面的 WS 兜底。
-    let wfProgressMsg = null;
-    if (line.includes('workflow_progress')) {
-      try { wfProgressMsg = projectWorkflowProgressMessage(JSON.parse(line)); } catch {}
-    }
+    // 工作流进度行是每 ~10s 一份的全量快照(73 助手档 45–125KB/条)。重放旧快照没有价值
+    // (下一份马上就到),却能把 5000 行的 earlyLines 撑到几百 MB 常驻 —— 故这类行
+    // 【不进缓冲】,只走下面的 WS 兜底。
     if (!wfProgressMsg) {
       if (slot.earlyLines.length < MAX_EARLY_LINES) slot.earlyLines.push(line);
       // r68:溢出是静默丢尾。今天不画所以无感,但客户端一旦按快照"种回"正文,重放缺一段
@@ -1876,10 +1881,7 @@ router.post('/chat', async (req, res) => {
             slot.liveTasks, m.tasks, Date.now(), LEVEL_GRACE_MS, slot.turnEpoch | 0);
           broadcastLiveTasks(slot, liveIds, settled, added);
         }
-        // r114:工作流进度表在投递前整表投影(只换 workflow_progress 这一个键,其余字段
-        // 一字不动)。用新局部变量投递 —— `line` 本身不动,落盘/回放/detach 全走原文。
-        const wfProjected = projectWorkflowProgressMessage(m);
-        deliverLine(slot, wfProjected ? JSON.stringify(wfProjected) : line);
+        deliverLine(slot, line);
         // r49b②:CLI 在 init 里自报本进程的生效档位。与本 slot 的 GUI 请求档对账,不一致
         // (guard 拒了 auto/plan)就补发一条系统行让界面当场现形——此前这种降级悄无声息,
         // 用户以为在跑自动档、实际是逐步确认。只读 + 发一行,不碰任何时序与 slot 生命周期。
