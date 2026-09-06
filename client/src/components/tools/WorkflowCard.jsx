@@ -5,7 +5,7 @@ import { resolveOwnedAgent } from '../../utils/agentOwner.js';
 import { confirmDialog } from '../../utils/confirmDialog.jsx';
 import { ElapsedTime } from '../LoadingBits.jsx';
 import {
-  agentDisplayState, getWorkflowSnapshot, groupWorkflowPhases,
+  agentDisplayState, effectiveRunStatus, getWorkflowSnapshot, groupWorkflowPhases,
   phaseRowQuota, resolveRunRef, runDisplayStatus, selectWorkflowSource,
 } from '../../utils/workflowView.js';
 
@@ -62,19 +62,21 @@ function fmtDuration(ms) {
   const s = Math.floor(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
-// 助手耗时:终态取 CLI 算好的 durationMs,在跑的按 startedAt 现算。
+// 助手耗时:终态取 CLI 算好的 durationMs;没有 durationMs 时只有【整个运行还在跑】才按
+// 当前时间现算 —— 历史卡片里 startedAt 是几个月前那次运行的时刻,减出来是"距那次运行过
+// 了多久"(几百分钟且每次重渲还在涨),不是耗时。
 // 不挂每秒定时器 —— 一次工作流最多渲 200 行,每秒重渲整卡不值当;进度表本身每 10s
 // 到一次,届时自然刷新。
-function agentDuration(entry) {
+function agentDuration(entry, isRunning) {
   if (Number.isFinite(entry?.durationMs)) return fmtDuration(entry.durationMs);
-  if (Number.isFinite(entry?.startedAt)) return fmtDuration(Date.now() - entry.startedAt);
+  if (isRunning && Number.isFinite(entry?.startedAt)) return fmtDuration(Date.now() - entry.startedAt);
   return null;
 }
 
-function AgentRow({ entry, index, state, onOpen, compact }) {
+function AgentRow({ entry, index, state, onOpen, compact, runActive = false }) {
   const label = clip(entry?.label) || `助手 ${index + 1}`;
   const tokens = fmtTokens(entry?.tokens);
-  const dur = agentDuration(entry);
+  const dur = agentDuration(entry, runActive);
   const lastTool = clip(entry?.lastToolSummary || entry?.lastToolName, 200);
   const openable = !!entry?.agentId && typeof onOpen === 'function';
   return (
@@ -139,6 +141,12 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
     cardTaskId: taskId,
     fallbackAgents,
   });
+  // 整体状态:live 条目在就用它;历史会话没有 live 条目(runStatus 恒 unknown)且这一刻
+  // 看的就是磁盘快照时,用快照里的 status 补出来。顶部徽章、每个助手行的状态、阶段默认
+  // 展开的"在跑"判定、以及要不要现算耗时,全部认这一个值 —— 只有停止按钮的渲染条件与
+  // 快照请求时机仍认 runStatus(那两处问的是"此刻有没有活着的运行",不是"当时结局如何")。
+  const effStatus = effectiveRunStatus(runStatus, pick.source, snapshot);
+  const runActive = effStatus === 'running';
   const rows = pick.source === 'snapshot' ? (snapshot?.progress || []) : (agent?.wfProgress || []);
   const groups = useMemo(() => groupWorkflowPhases(pick.source === 'disk' || pick.source === 'none' ? null : rows), [rows, pick.source]);
   const quota = phaseRowQuota(groups.length);
@@ -190,7 +198,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
         agentType: entry.agentType || null,
         model: entry.model || null,
         description: clip(entry.lastToolSummary) || '',
-        status: HYDRATE_STATUS[agentDisplayState(entry, runStatus)] || 'stopped',
+        status: HYDRATE_STATUS[agentDisplayState(entry, effStatus)] || 'stopped',
         startedAt: Number.isFinite(entry.startedAt) ? entry.startedAt : Date.now(),
         sessionId: ownerSessionId || null,
       });
@@ -219,7 +227,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
 
   // 展开态 = 用户设定 ?? 首次见到该阶段时算出的默认值(算完冻住)。每 10s 一份新进度
   // 表既不能把用户折起来的阶段重新弹开,也不该在阶段跑完那一刻自己收起。
-  const anyActive = groups.some((g) => g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, runStatus))));
+  const anyActive = groups.some((g) => g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, effStatus))));
   // 全终态时展开最后【一个派过助手的】阶段:阶段是开跑前就全量预告的,收尾时的最后
   // 一组常常是没派出助手的空阶段,展开它等于把真正有结果的那组藏起来。
   const withAgents = groups.filter((g) => g.agents.length);
@@ -227,7 +235,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   const isOpen = (g) => {
     if (override.has(g.key)) return override.get(g.key);
     if (!foldDefaults.current.has(g.key)) {
-      const active = g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, runStatus)));
+      const active = g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, effStatus)));
       foldDefaults.current.set(g.key, active || (!anyActive && g.key === lastKey));
     }
     return foldDefaults.current.get(g.key);
@@ -251,8 +259,8 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[12px] text-ink font-body truncate" title={name}>{name}</span>
-            <Badge state={runStatus} label={RUN_LABEL[runStatus]} />
-            {runStatus === 'running' && Number.isFinite(agent?.startedAt) && <ElapsedTime startedAt={agent.startedAt} />}
+            <Badge state={effStatus} label={RUN_LABEL[effStatus]} />
+            {runActive && Number.isFinite(agent?.startedAt) && <ElapsedTime startedAt={agent.startedAt} />}
           </div>
           {meta && <div className="mt-0.5 truncate text-[10px] text-ink-faint font-body" title={meta}>{meta}</div>}
         </div>
@@ -289,7 +297,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
             const open = isOpen(g);
             const full = showAll.has(g.key);
             const shown = full ? g.agents : g.agents.slice(0, quota);
-            const doneCount = g.agents.filter((a) => ['done', 'cached'].includes(agentDisplayState(a, runStatus))).length;
+            const doneCount = g.agents.filter((a) => ['done', 'cached'].includes(agentDisplayState(a, effStatus))).length;
             return (
               <div key={g.key}>
                 <button
@@ -312,8 +320,9 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
                         key={a.agentId ?? ('i' + i)}
                         entry={a}
                         index={i}
-                        state={agentDisplayState(a, runStatus)}
+                        state={agentDisplayState(a, effStatus)}
                         compact={compact}
+                        runActive={runActive}
                         onOpen={() => openAgent(a)}
                       />
                     ))}
