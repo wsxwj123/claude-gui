@@ -72,6 +72,24 @@ export function runDisplayStatus(agent) {
   return 'unknown';
 }
 
+// 磁盘快照里的运行状态 → 界面上的整体状态。取值域是穷举的三个终态词,其余一律 unknown:
+// 猜错(比如把 running/pending/大小写变体当终态)就是历史卡片谎报"已完成/已停止"。
+export function snapshotRunStatus(status) {
+  if (status === 'completed') return 'done';
+  if (status === 'failed') return 'error';
+  if (status === 'killed') return 'stopped';
+  return 'unknown';
+}
+
+// 整体状态:live 条目永远优先,快照只在【历史会话根本没有 live 条目】时补位 ——
+// 那时 runDisplayStatus 恒为 'unknown',顶部徽章就只能显示「状态未知」、进度表里定格在
+// progress 的助手还会一直转圈。条件里必须同时卡住 source==='snapshot',否则续跑覆写的
+// 快照会把还在跑的运行写成已完成(与 selectWorkflowSource 序 1/1b 是同一条红线)。
+export function effectiveRunStatus(liveStatus, source, snapshot) {
+  if (source === 'snapshot' && liveStatus === 'unknown') return snapshotRunStatus(snapshot?.status);
+  return liveStatus;
+}
+
 // 助手级显示状态,三段按序,先命中先返回:
 //   A 段 agent 自身终态 > run 状态(工作流被停,已跑完的助手仍是"完成");
 //   B 段 run 终态 > agent 非终态(定格在停止那一刻的表里 state 还是 progress);
