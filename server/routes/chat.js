@@ -18,6 +18,7 @@ import { repairOfficialCompat } from '../utils/session-repair.js';
 import { contextTimeoutBudget, latestCountTokensOutcome } from '../utils/context-tokens.js';
 import { canonicalCwd } from '../utils/safe-path.js';
 import { GENUI_SECTION_TEXT } from '../utils/genui-section.js';
+import { projectWorkflowProgress } from '../utils/workflow-progress.js';
 import { broadcast, clients } from '../broadcast.js';
 import { recordDraftSessionBinding } from '../services/draft-session-bindings.js';
 import { cliSupportsFlag, cliSupportsSnapshotFlag, snapshotFlagOn, primeHelpCache } from '../utils/prompt-cache-env.js';
@@ -695,15 +696,37 @@ function makeInputQueue() {
   };
 }
 
+// r114:工作流进度消息(system/task_progress 带 workflow_progress)的整表投影。
+// 命中 → 返回投影后的【新消息对象】(原对象一个字不动);不是这类消息 → null。
+// 两个消费者:①消息泵投递前改写(SSE 拿到的是投影后的表);②deliverLine 的无监听 WS 兜底。
+// 投影 = 白名单,砍掉 promptPreview(写给助手的整段提示词原文)等,见 utils/workflow-progress.js。
+// (export 仅为可单测,同 matchOfficialEmptyBlockError。)
+export function projectWorkflowProgressMessage(m) {
+  if (!m || m.type !== 'system' || m.subtype !== 'task_progress') return null;
+  const progress = projectWorkflowProgress(m.workflow_progress);
+  // 缺 workflow_progress 的纯心跳(实证 6 条里 4 条不带)→ null → 原样透传。
+  // 绝不把缺失的表补成 []:缺表 ≠ 空表,补了会把前端已有的进度整表清空。
+  return progress ? { ...m, workflow_progress: progress } : null;
+}
+
 // 把一行消息送给 SSE:有活跃监听(已 attach)→ 实时写;否则回落 earlyLines 缓冲,
 // 供下次 /stream 重连回放(detach-don't-abort)。
 function deliverLine(slot, line) {
   if (slot.listeners.size) { for (const fn of slot.listeners) { try { fn(line); } catch {} } }
   else {
-    if (slot.earlyLines.length < MAX_EARLY_LINES) slot.earlyLines.push(line);
-    // r68:溢出是静默丢尾。今天不画所以无感,但客户端一旦按快照"种回"正文,重放缺一段
-    // 就成了正文中段悄悄少一块 —— 比空窗更坏。置位,attach 回放前明说一声(见 /stream)。
-    else slot.earlyOverflowed = true;
+    // r114:工作流进度行是每 ~10s 一份的全量快照(73 助手档 45–125KB/条)。重放旧快照
+    // 没有价值(下一份马上就到),却能把 5000 行的 earlyLines 撑到几百 MB 常驻 ——
+    // 故这类行【不进缓冲】,只走下面的 WS 兜底。
+    let wfProgressMsg = null;
+    if (line.includes('workflow_progress')) {
+      try { wfProgressMsg = projectWorkflowProgressMessage(JSON.parse(line)); } catch {}
+    }
+    if (!wfProgressMsg) {
+      if (slot.earlyLines.length < MAX_EARLY_LINES) slot.earlyLines.push(line);
+      // r68:溢出是静默丢尾。今天不画所以无感,但客户端一旦按快照"种回"正文,重放缺一段
+      // 就成了正文中段悄悄少一块 —— 比空窗更坏。置位,attach 回放前明说一声(见 /stream)。
+      else slot.earlyOverflowed = true;
+    }
     // 停止链路 #3 兜底:后台化子代理跨回合才完成时,权威终态 task_notification 到达的
     // 时刻往往没有活跃 SSE(per-turn 流已关)——只落 earlyLines 会被下条消息的
     // `s.earlyLines = []` 清掉(或无人再读),前端卡片永远"工作中"。此处额外走全局 WS
@@ -742,6 +765,22 @@ function deliverLine(slot, line) {
             console.warn(`[chat] prompt_suggestion 丢弃(无 SSE 监听且无 WS 客户端) session=${slot.sessionId || '-'}`);
           }
         }
+      } catch {}
+    }
+    // r114 同款兜底:工作流跨回合在后台跑时(用户已发下一条/关了流),per-turn SSE 早已
+    // 关闭,进度只能经全局 WS 送达 —— 否则回合一结束界面就再也不更新(实证:主回合
+    // result 之后 task_progress 仍持续到达父流)。SSE 在线时走上面的 if 分支不进这里,
+    // 不会双发;客户端只按 tool_use_id 命中已存在条目更新,不建新条目 → 不会串会话。
+    if (wfProgressMsg) {
+      try {
+        broadcast({
+          type: 'workflow-progress-bg',
+          sessionId: slot.sessionId || null,
+          tool_use_id: wfProgressMsg.tool_use_id || null,
+          task_id: wfProgressMsg.task_id || null,
+          workflow_progress: wfProgressMsg.workflow_progress,
+          ts: Date.now(),
+        });
       } catch {}
     }
   }
@@ -1837,7 +1876,10 @@ router.post('/chat', async (req, res) => {
             slot.liveTasks, m.tasks, Date.now(), LEVEL_GRACE_MS, slot.turnEpoch | 0);
           broadcastLiveTasks(slot, liveIds, settled, added);
         }
-        deliverLine(slot, line);
+        // r114:工作流进度表在投递前整表投影(只换 workflow_progress 这一个键,其余字段
+        // 一字不动)。用新局部变量投递 —— `line` 本身不动,落盘/回放/detach 全走原文。
+        const wfProjected = projectWorkflowProgressMessage(m);
+        deliverLine(slot, wfProjected ? JSON.stringify(wfProjected) : line);
         // r49b②:CLI 在 init 里自报本进程的生效档位。与本 slot 的 GUI 请求档对账,不一致
         // (guard 拒了 auto/plan)就补发一条系统行让界面当场现形——此前这种降级悄无声息,
         // 用户以为在跑自动档、实际是逐步确认。只读 + 发一行,不碰任何时序与 slot 生命周期。
