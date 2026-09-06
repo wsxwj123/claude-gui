@@ -79,4 +79,17 @@ assert.deepEqual(groupCoworkBlocks([]), [], '空 blocks → 空段');
   assert.equal(activeGroupKey(segs, true), null, '正文已落地(末段 text)→ group 收起,无活跃段');
 }
 
+// ── r114(§F / §E2-1):Workflow 独立成 kind:'workflow' 段 ──
+// 用户视角:一次工作流会派几十个助手,它在聊天里要展开成阶段视图,不能跟 Bash/Read
+// 一起折进"协作过程"的工具堆里(折进去 = 用户根本看不到工作流跑到哪了)。
+{
+  const segs = groupCoworkBlocks([tool('Workflow')]);
+  assert.deepEqual(segs.map((s) => s.kind), ['workflow'], 'Workflow 单独成段');
+}
+{
+  const segs = groupCoworkBlocks([think('t'), tool('Workflow'), txt('答案')]);
+  assert.deepEqual(segs.map((s) => s.kind), ['group', 'workflow', 'text'],
+    '[思考][Workflow][正文] → group / workflow / text 三段');
+}
+
 console.log('✓ check-stream-status: all passed');
