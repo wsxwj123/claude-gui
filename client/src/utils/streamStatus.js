@@ -72,6 +72,13 @@ export function groupCoworkBlocks(blocks, { getSkillDocReadName } = {}) {
         segs.push({ kind: 'task', key: i, index: i, toolCall: tc });
         continue;
       }
+      // 工作流独立成段:它在聊天里要展开成阶段/助手视图。折进 group 折叠区 = 用户
+      // 看不到这次跑到哪个阶段、哪些助手还在跑(一次工作流能派几十个)。
+      if (tc.name === 'Workflow') {
+        flush();
+        segs.push({ kind: 'workflow', key: i, index: i, toolCall: tc });
+        continue;
+      }
       if (tc.name === 'Skill') {
         // 连续同一 skill 合并成一张横幅(带次数),中间隔了别的块则另起。
         const prev = list[i - 1];

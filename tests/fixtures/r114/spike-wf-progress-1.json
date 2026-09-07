@@ -1,0 +1,55 @@
+{
+  "type": "system",
+  "subtype": "task_progress",
+  "task_id": "w1zi6gd0p",
+  "tool_use_id": "toolu_01UMapHJXLDJddj3ZT5tCeJf",
+  "description": "Sleep: sleep:1",
+  "usage": {
+    "total_tokens": 0,
+    "tool_uses": 0,
+    "duration_ms": 19
+  },
+  "last_tool_name": "sleep:1",
+  "summary": "spike: two sleeping agents",
+  "workflow_progress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Sleep"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Report"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "sleep:1",
+      "phaseIndex": 1,
+      "phaseTitle": "Sleep",
+      "agentId": "aaa8fb048d528745f",
+      "model": "claude-sonnet-4-6",
+      "state": "start",
+      "startedAt": 1788654540445,
+      "queuedAt": 1788654540444,
+      "attempt": 1,
+      "promptPreview": "Use the Bash tool to run exactly: perl -e 'sleep 80'  (timeout 90000). After it finishes reply with the single word DONE.",
+      "lastProgressAt": 1788654540446
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "sleep:2",
+      "phaseIndex": 1,
+      "phaseTitle": "Sleep",
+      "model": "claude-sonnet-4-6",
+      "state": "start",
+      "queuedAt": 1788654540444,
+      "promptPreview": "Use the Bash tool to run exactly: perl -e 'sleep 80'  (timeout 90000). After it finishes reply with the single word DONE.",
+      "lastProgressAt": 1788654540444
+    }
+  ],
+  "uuid": "999e6157-936f-45e7-9cac-8e8bd9dd61cf",
+  "session_id": "c9d4926e-db12-4b39-ab8a-a123d972d341"
+}

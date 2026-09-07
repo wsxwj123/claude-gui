@@ -325,6 +325,12 @@ export function useWebSocket() {
               // 按 sessionId 入位;两条路径都到时内容相等,setPromptSuggestionFor 自去重。
               useStore.getState().setPromptSuggestionFor(data.sessionId, data.suggestion);
               break;
+            case 'workflow-progress-bg':
+              // r114:工作流跨回合在后台跑时(回合的 SSE 已关),CLI 仍每 ~10s 往父流推
+              // 一份全量阶段/助手表。服务端只在【无 SSE 监听】时经此类型兜底广播,
+              // App.jsx 顶层监听按 tool_use_id 落到已存在的条目上(不建新条目)。
+              window.dispatchEvent(new CustomEvent('cgui:workflow-progress-bg', { detail: data }));
+              break;
             case 'background-tasks':
               // 批A:服务端按 CLI 的 background_tasks_changed(全量存活集快照)对完账后广播。
               // App.jsx 顶层监听:settled 的直接收尾,本会话不在集内的僵尸卡剪掉。纯 UI 收敛,

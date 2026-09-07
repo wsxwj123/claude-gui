@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useContext } from 'react';
 import {
   Brain, Copy, Check, ChevronDown, ChevronRight,
   Wrench, BookOpen, Pencil, Terminal, FileText, Search,
@@ -12,6 +12,7 @@ import { BashCard } from './tools/BashCard.jsx';
 import { EditDiffCard } from './tools/EditDiffCard.jsx';
 import { ReadCard } from './tools/ReadCard.jsx';
 import { TaskCard, TaskOwnerContext } from './tools/TaskCard.jsx';
+import { WorkflowCard } from './tools/WorkflowCard.jsx';
 import { GrepGlobCard } from './tools/GrepGlobCard.jsx';
 import { WebCard } from './tools/WebCard.jsx';
 import { SkillCard } from './tools/SkillCard.jsx';
@@ -30,6 +31,10 @@ const INLINE_TOOL_NAMES = new Set([
   // 'Agent' 与 'Task' 都是子代理派发工具(不同 provider/CLI 命名不同),都走 TaskCard。
   'Task', 'Agent', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Skill',
 ]);
+
+// 工作流派发工具。独立成卡(阶段 + 助手表),不进 INLINE_TOOL_NAMES 的通用卡片路径,
+// 也不随聊天模式的"执行了 N 步操作"折起 —— 它是这条消息的主体,一次能跑几十分钟。
+const WORKFLOW_TOOL = 'Workflow';
 
 // AI 有时不走 Skill 工具,而是直接用读取类工具读 <skill>/SKILL.md 加载技能 —
 // 这种调用也按 skill 横幅渲染(否则用户只看到一行普通 Read,不知道技能被加载)。
@@ -522,6 +527,11 @@ export function CoworkBlocks({
   chatMode = false, chatExpanded = false, chatFoldBar = null, chatUnfoldBar = null,
 }) {
   const [override, setOverride] = useState(() => new Map());       // group key → 用户设定展开态
+  // 工作流卡片的归属会话(与 TaskCard 同一把:fork 复制出的卡片共享 tool_use.id)。
+  const ownerSid = useContext(TaskOwnerContext);
+  // 点开工作流内层助手:卡片只负责水合并回调,落到哪个窗格由这里定(与 TaskCard 的
+  // openAgentView 同款,取渲染所在/焦点 pane)——卡片自己读 activeTabIndex 会分屏串扰。
+  const openWfAgent = (key) => { const st = useStore.getState(); st.setViewingAgent(st.activeTabIndex, key); };
   // 思考小折叠的展开态归 ThinkingFold 自己管(叶子 state),这里不再持有 —— 展开一块
   // 不必重渲整个 CoworkBlocks 子树。
   const list = Array.isArray(blocks) ? blocks : [];
@@ -541,8 +551,9 @@ export function CoworkBlocks({
         out.push(<MarkdownRenderer key={`b-${i}`} content={b.content} dockKeyPrefix={`${dockKeyPrefix}:${i}`} isStreaming={isLive} />);
         return;
       }
-      // 未展开:收起工具/子代理/skill(思考照常显示,清单不计)。
-      if (!chatExpanded && b.type === 'tool_use' && b.toolCall) {
+      // 未展开:收起工具/子代理/skill(思考照常显示,清单不计)。工作流不在此列 ——
+      // 见 WORKFLOW_TOOL 的注释,折起来就等于看不到它跑到哪一阶段。
+      if (!chatExpanded && b.type === 'tool_use' && b.toolCall && b.toolCall.name !== WORKFLOW_TOOL) {
         if (!TASK_TOOL_NAMES.has(b.toolCall.name)) hiddenTools++;
         return;
       }
@@ -568,6 +579,11 @@ export function CoworkBlocks({
         if (skillDocName) {
           flushBucket(i);
           out.push(<ToolCallWithRetry key={`b-${i}`} toolCall={b.toolCall} onRetryTool={onRetryTool} hoverOnly><SkillCard toolCall={b.toolCall} nameOverride={skillDocName} subLabel="读取技能文档" /></ToolCallWithRetry>);
+          return;
+        }
+        if (b.toolCall.name === WORKFLOW_TOOL) {
+          flushBucket(i);
+          out.push(<WorkflowCard key={`b-${i}`} toolUseId={b.toolCall.id} ownerSessionId={ownerSid} toolCall={b.toolCall} onOpenAgent={openWfAgent} />);
           return;
         }
         if (b.toolCall.name === 'Task' || b.toolCall.name === 'Agent') {
@@ -596,6 +612,11 @@ export function CoworkBlocks({
           <ToolCallWithRetry key={`k-${seg.key}`} toolCall={seg.toolCall} onRetryTool={onRetryTool} hoverOnly>
             <TaskCard toolCall={seg.toolCall} />
           </ToolCallWithRetry>
+        );
+      case 'workflow':
+        return (
+          <WorkflowCard key={`k-${seg.key}`} toolUseId={seg.toolCall.id} ownerSessionId={ownerSid}
+            toolCall={seg.toolCall} onOpenAgent={openWfAgent} />
         );
       case 'skill': {
         const latest = seg.calls[seg.calls.length - 1];

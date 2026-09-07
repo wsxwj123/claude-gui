@@ -11,6 +11,40 @@ import {
 
 export { isApprovedPlanToolCall };
 import { parseJsonl, readJsonlEdges } from '../utils/jsonl-parser.js';
+import { parseWorkflowLaunchText, parseWorkflowTranscriptDir } from '../utils/workflow-progress.js';
+
+// r114:Workflow 工具的 tool_result 上附一份 workflowRun —— 前端拉磁盘快照(重建历史
+// 工作流视图)的唯一依据。两个来源:
+//   ①结构化 toolUseResult(taskType === 'local_workflow',新会话都有,实证键集合:
+//     status/taskId/taskType/workflowName/runId/summary/transcriptDir/scriptPath);
+//   ②老会话没有 toolUseResult(或缺 runId)时,从 tool_result 正文里捞。
+// 两条都不成 → 返回 null,调用方不加这个键(其余 tool_result 形状一字不变)。
+// 【绝不】把 transcriptDir / 脚本路径这类本机绝对路径透给前端:只回从中解析出的
+// projectHash / sid(解析不出就是 null,其余字段照给)。
+function workflowRunOf(toolUseResult, content) {
+  const tur = toolUseResult && typeof toolUseResult === 'object' ? toolUseResult : null;
+  const isWorkflow = tur?.taskType === 'local_workflow';
+  // 正文兜底只在正文里真有 workflows 路径段时才跑正则:runId 必须来自 `workflows/wf_…`
+  // (契约也要求"正文能解析出 runId"才兜底),这个前置判据不改变结果,但省掉了对每条
+  // 普通 Bash/Read 结果的三遍白扫(大会话几千条 tool_result)。
+  // 正文先归一为字符串:缺 content 的 tool_result 传进来的是 undefined(上游 JSON.stringify
+  // 对 undefined 返回 undefined),直接调字符串方法会抛 TypeError,且这条路径外层没有
+  // try/catch → 一条坏块让整个会话历史 500。归一后它与"正文里没有 workflows"同路,
+  // 不加 workflowRun、其余字段照给(与本轮改动前对同一记录的行为一致)。
+  const text = typeof content === 'string' ? content : '';
+  const fromText = (!isWorkflow || !tur.runId) && text.includes('workflows')
+    ? parseWorkflowLaunchText(text) : null;
+  if (!isWorkflow && !fromText?.runId) return null;
+  const dir = tur?.transcriptDir || fromText?.transcriptDir || null;
+  const loc = parseWorkflowTranscriptDir(dir);
+  return {
+    taskId: tur?.taskId ?? fromText?.taskId ?? null,
+    runId: tur?.runId ?? fromText?.runId ?? null,
+    workflowName: tur?.workflowName ?? null,
+    projectHash: loc?.projectHash ?? null,
+    sid: loc?.sid ?? null,
+  };
+}
 
 // L4: 附件元数据 sidecar。cc CLI 的 jsonl 由 CLI 写,GUI 无法注入 attachments 字段,
 // 改用旁路文件按 textHash 索引,session-reader 读历史消息时 merge 回来。
@@ -964,11 +998,15 @@ export async function getSessionMessages(sessionId, projectHash) {
       const content = normalizeContent(record.message?.content);
       for (const item of content) {
         if (item.type === 'tool_result') {
-          toolResultMap.set(item.tool_use_id, {
+          const entry = {
             toolUseId: item.tool_use_id,
             content: typeof item.content === 'string' ? item.content : JSON.stringify(item.content),
             isError: item.is_error || false,
-          });
+          };
+          // 工作流的结果才附 workflowRun;其余 tool_result 一个键都不多出来。
+          const workflowRun = workflowRunOf(record.toolUseResult, entry.content);
+          if (workflowRun) entry.workflowRun = workflowRun;
+          toolResultMap.set(item.tool_use_id, entry);
         }
       }
     }

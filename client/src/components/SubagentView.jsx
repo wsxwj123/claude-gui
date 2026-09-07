@@ -37,7 +37,9 @@ export function SubagentView({ agentId, paneId, active = false, parentTitle, par
   const sessionsList = useStore((s) => s.sessions);
   let metaAgent;
   for (const sess of (Array.isArray(sessionsList) ? sessionsList : [])) {
-    metaAgent = sess?.subagents?.find?.((a) => a.toolUseId === agentId);
+    // 工作流内层助手的 store 键是 'agent-<agentId>'(= server 侧那条子代理的 sessionId),
+    // 不是 tool_use_id —— 只按 toolUseId 对,内层助手就永远拿不到 agentType/model/占用。
+    metaAgent = sess?.subagents?.find?.((a) => a.toolUseId === agentId || a.sessionId === agentId);
     if (metaAgent) break;
   }
 
@@ -190,7 +192,13 @@ export function SubagentView({ agentId, paneId, active = false, parentTitle, par
             {/* 部件①单卡停止:非终态时显示。停止链路走 store action(反查 pid + stop-task 端点 +
                 乐观收尾)。sessionId 以【本视图所属母会话】为准,agent 捕获值垫底 ——
                 agent.sessionId 是发起时钉的会话,分支场景下它指向源会话(Bug5 现象②)。 */}
-            {nonTerminal && (
+            {/* 工作流内层助手停不了:CLI 的停止指令只认"任务"这一级,内层 agentId 不在
+                任务表里,拿它去调只会静默落空并显示误导性的"任务表中已不存在"。原位置
+                改放一行说明,免得用户以为按钮丢了。 */}
+            {agent?.wfInner && (
+              <span className="text-ink-faint font-body">工作流内的单个助手无法单独停止;可停止整个工作流。</span>
+            )}
+            {nonTerminal && !agent?.wfInner && (
               <button
                 onClick={async () => {
                   // D5:同 TaskCard —— 没有 slot 认领(provider 不发 task 事件)时给一次提示,

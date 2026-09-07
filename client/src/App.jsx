@@ -794,6 +794,23 @@ function findAgentIdByTaskId(st, taskId) {
   return null;
 }
 
+// 工作流阶段/助手表的写入(r114 §B1-2/3/9/9b)。CLI 每 ~10s 在 task_progress 里推一份
+// 全量表,回合内经 SSE 到达、回合外经 WS 兜底(workflow-progress-bg)到达。
+//   缺表 ≠ 空表:实证 6 条 task_progress 只有 2 条带表,兜底成 [] 会让阶段视图闪空白;
+//   权威终态之后到达的表整条丢弃,防"完成后又转回在跑";
+//   乐观 stopped(optimisticStop)例外 —— 它随时可能被权威 completed 推翻,那时若表还
+//   停在停止前那份,最后几个助手会永远显示"未知"。
+// SSE 那条路按 §E2-3 的源码锁把同一判据写在 task_progress 分支内(锁要求判据可见),
+// 本函数是 WS 兜底那条路的写入点,两处判据必须一致。
+function applyWorkflowProgress(st, toolUseId, table) {
+  if (!Array.isArray(table) || !toolUseId) return;
+  const a = st.activeAgents[toolUseId];
+  // 只更新已存在的条目,不建新条目 → 跨会话/跨窗格的广播天然不会串出一张新卡片。
+  if (!a) return;
+  if (['done', 'error', 'stopped'].includes(a.status) && !a.optimisticStop) return;
+  st.upsertAgent(toolUseId, { wfProgress: table, wfProgressAt: Date.now() });
+}
+
 function finalizeAgent(st, agentId, tnStatus, visited, authoritative) {
   visited = visited || new Set();
   if (visited.has(agentId)) return;
@@ -5320,6 +5337,14 @@ const SessionDetail = React.memo(function SessionDetail({ tabIndex = 0, mobileCh
             const desc = event.summary || event.description;
             if (desc && _st.activeAgents[event.tool_use_id]) {
               _st.upsertAgent(event.tool_use_id, { description: desc });
+            }
+            // 工作流阶段/助手表:有表才整表替换(缺表保留上一份),权威终态之后到达的
+            // 整条丢弃,乐观 stopped 只冻 status 不冻表。判据与 applyWorkflowProgress
+            // (WS 兜底那条路)逐字一致,改一处必须改两处。
+            const _wfa = _st.activeAgents[event.tool_use_id];
+            if (Array.isArray(event.workflow_progress) && _wfa
+                && (!['done', 'error', 'stopped'].includes(_wfa.status) || _wfa.optimisticStop)) {
+              _st.upsertAgent(event.tool_use_id, { wfProgress: event.workflow_progress, wfProgressAt: Date.now() });
             }
           }
           if (event.type === 'system' && event.subtype === 'task_notification') {
@@ -11030,13 +11055,21 @@ export default function App() {
       const sid = e.detail?.sessionId;
       if (sid) finalizeSessionAgents(sid);
     };
+    // r114:工作流跨回合在后台跑时,回合的 SSE 早已关闭,进度只能经全局 WS 到达 ——
+    // 这是"回合结束后界面还能继续看到工作流进度"的唯一通路。
+    const onWorkflowProgressBg = (e) => {
+      const d = e.detail || {};
+      applyWorkflowProgress(useStore.getState(), d.tool_use_id, d.workflow_progress);
+    };
     window.addEventListener('cgui:task-notification-bg', onBgTaskNotification);
     window.addEventListener('cgui:background-tasks', onBackgroundTasks);
     window.addEventListener('cgui:session-procs-killed', onSessionProcsKilled);
+    window.addEventListener('cgui:workflow-progress-bg', onWorkflowProgressBg);
     return () => {
       window.removeEventListener('cgui:task-notification-bg', onBgTaskNotification);
       window.removeEventListener('cgui:background-tasks', onBackgroundTasks);
       window.removeEventListener('cgui:session-procs-killed', onSessionProcsKilled);
+      window.removeEventListener('cgui:workflow-progress-bg', onWorkflowProgressBg);
     };
   }, []);
 

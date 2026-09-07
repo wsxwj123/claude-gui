@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { readFile, readdir, writeFile, mkdir, stat, open, unlink } from 'fs/promises';
+import { readFile, readdir, writeFile, mkdir, stat, lstat, open, unlink } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
@@ -9,6 +9,10 @@ import { getActiveChatProcesses, claudeSpawn, cleanChildEnv, safeModelArg } from
 import { resolveWorkspacePath } from '../utils/safe-path.js';
 import { claudeCommand, resolveClaude } from '../utils/claude-resolver.js';
 import { winCmdLineBudget } from '../utils/win-cmd.js';
+import {
+  WF_RUN_ID, WF_SAFE_ID as WF_SAFE_ID_CANON, WF_MAX_SNAPSHOT_BYTES,
+  workflowSnapshotPath, projectWorkflowSnapshot,
+} from '../utils/workflow-progress.js';
 import { dropPendingForSession } from './permissions.js';
 
 const execFileP = promisify(execFile);
@@ -294,7 +298,10 @@ router.get('/agents/active', async (req, res) => {
 // 否则 agent-*.jsonl mtime 新(<WF_ALIVE_MS)= running,过期 = idle(不谎称完成,同 bgTask 三态
 // 哲学)。Win 路径复用 join/readdir 不手拼分隔符。
 const WF_ALIVE_MS = 15000;
-const WF_SAFE_ID = /^(?!\.+$)[A-Za-z0-9._-]+$/;  // 排除纯点名(..)防路径穿透,见 LEARNINGS 同款规矩
+// 排除纯点名(..)防路径穿透,见 LEARNINGS 同款规矩。r114 起定义收在
+// utils/workflow-progress.js(那边的纯函数也要用同一把闸),这里绑同一个对象再导出 ——
+// 两处各写一份正则必漂。
+export const WF_SAFE_ID = WF_SAFE_ID_CANON;
 router.get('/workflow-agents', async (req, res) => {
   const projectHash = String(req.query.projectHash || '');
   const sid = String(req.query.sid || '');
@@ -330,6 +337,57 @@ router.get('/workflow-agents', async (req, res) => {
     }
   }
   res.json({ agents: out });
+});
+
+// GET /api/workflow-run?projectHash=X&sid=Y&runId=Z — 一次工作流运行的磁盘快照(只读)。
+// 工作流跑完(含被停止)会在 <sid>/workflows/<runId>.json 落一份终态快照:阶段表、
+// 每个助手的最终状态、result/error。历史会话重开时,界面就靠它把那次运行画出来。
+// 三个参数全来自前端(由服务端在 session-reader 里解析后下发,见 workflowRun),
+// 所以这里按【最坏情况】设门:
+//   ①三参正则(零 fs)→ ②逐段 lstat 查符号链接 → ③ENOENT → ④目录 → ⑤体积 → ⑥读+解析。
+// 次序不能换:符号链接门必须早于 ENOENT(悬空软链的 lstat 不报错但 readFile 会跟随),
+// 体积门必须早于 readFile(33MB 读进单进程后端 = 全局卡顿)。
+// 只读:本路由不含任何写操作;错误 body 只有一个 error 键、不回显路径。
+router.get('/workflow-run', async (req, res) => {
+  const projectHash = String(req.query.projectHash || '');
+  const sid = String(req.query.sid || '');
+  const runId = String(req.query.runId || '');
+  // 参数档必须在碰 fs 之前返回 —— 脏参数一个字节都不许落到文件系统上。
+  if (!WF_SAFE_ID.test(projectHash) || !WF_SAFE_ID.test(sid) || !WF_RUN_ID.test(runId)) {
+    return res.status(400).json({ error: 'bad_request' });
+  }
+  const target = workflowSnapshotPath(projectHash, sid, runId);
+  if (!target) return res.status(400).json({ error: 'bad_request' });   // startsWith(root) 兜底
+  // 符号链接门:正则与 startsWith 只挡字符串穿透。若 <sid> 目录或 <runId>.json 本身是
+  // 指向 ~/.claude.json 的软链,字符串校验全过、readFile 跟随链接读到目标,同名键
+  // (status/summary/error)会被投影后原样回给前端。故四段路径逐段 lstat,任一段是软链即拒。
+  let st = null;
+  for (const seg of target.segments) {
+    try {
+      st = await lstat(seg);
+    } catch (e) {
+      const code = e?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') return res.status(404).json({ error: 'not_found' });
+      return res.status(500).json({ error: 'unreadable' });
+    }
+    if (st.isSymbolicLink()) return res.status(400).json({ error: 'bad_request' });
+  }
+  if (st.isDirectory()) return res.status(404).json({ error: 'not_found' });
+  if (st.size > WF_MAX_SNAPSHOT_BYTES) return res.status(413).json({ error: 'too_large' });
+  if (st.size === 0) return res.status(422).json({ error: 'corrupt' });   // 写了一半就被杀
+  let raw;
+  try {
+    raw = await readFile(target.path, 'utf-8');
+  } catch (e) {
+    const code = e?.code;
+    if (code === 'ENOENT' || code === 'EISDIR') return res.status(404).json({ error: 'not_found' });
+    return res.status(500).json({ error: 'unreadable' });
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return res.status(422).json({ error: 'corrupt' }); }
+  const snapshot = projectWorkflowSnapshot(parsed);
+  if (!snapshot) return res.status(422).json({ error: 'corrupt' });      // 顶层不是对象(数组等)
+  res.json({ ...snapshot, projectHash, sid });
 });
 
 // ── 后台代理(claude --bg / claude agents)────────────────────────────────

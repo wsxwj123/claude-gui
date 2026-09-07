@@ -130,6 +130,26 @@ const payload = (patch) => ({ sessionId: SID, taskIds: [], toolUseIds: [], settl
     'TaskCard 必须区分"对账猜出来的结束"');
   assert.ok(/isSettledUnknown \? \([\s\S]{0,200}aria-label="子代理已结束"/.test(card),
     'settledBy 条目显示中性"已结束",不冒充绿勾"完成"');
+
+  // r114(§F):工作流内层助手的水合条目(wfInner)必须同时带 hydrated:true —— 否则它会
+  // 落进 level 剪枝的射程(内层助手根本不在 CLI 的 tasks 表里,必被误收成"已结束")。
+  {
+    const files = ['client/src/components/tools/WorkflowCard.jsx', 'client/src/App.jsx'];
+    let found = 0;
+    for (const rel of files) {
+      let src = '';
+      try { src = readFileSync(join(root, rel), 'utf8'); } catch { continue; }
+      let p = src.indexOf('wfInner: true');
+      while (p >= 0) {
+        found += 1;
+        const seg = src.slice(Math.max(0, p - 200), p + 200);
+        assert.ok(/hydrated:\s*true/.test(seg),
+          `${rel} 里的 wfInner 水合写入必须同时带 hydrated:true(否则内层助手卡会被 level 误收)`);
+        p = src.indexOf('wfInner: true', p + 1);
+      }
+    }
+    assert.ok(found > 0, '前端必须有 wfInner:true 的水合写入点(内层助手点开对话的唯一入口)');
+  }
 }
 
 console.log('✓ check-level-prune: 剪枝 6 组 + 混合场景 + 接线源码守卫 全过');

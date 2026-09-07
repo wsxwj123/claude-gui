@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Bot, Loader2, Square, Clock, RefreshCw, Terminal, ChevronDown, ChevronRight, Maximize2, PlayCircle } from './Icon.jsx';
 import { useStore } from '../stores/sessionStore.js';
 import { MarkdownRenderer } from './MarkdownRenderer.jsx';
+import { WorkflowCard } from './tools/WorkflowCard.jsx';
 
 function fmtElapsed(ms) {
   if (!ms || ms < 0) return '—';
@@ -362,7 +363,10 @@ function AgentBucket({ id, title, titleColor, defaultOpen, agents }) {
       </button>
       {open && (
         <div className="space-y-2 mt-1.5">
-          {agents.map((a) => <AgentCard key={a.id} agent={a} />)}
+          {/* 工作流条目走整张阶段卡(与聊天内联同一个组件),普通子代理走 AgentCard。
+              面板里不给 onOpenAgent:这里拿不到 projectHash(只有服务端随工具结果下发的
+              运行引用才有),点开只会是一个没有转写的空视图。点内层助手请到聊天里那张卡。 */}
+          {agents.map((a) => (a.workflow ? <WorkflowCard key={a.id} toolUseId={a.id} ownerSessionId={a.sessionId || null} compact /> : <AgentCard key={a.id} agent={a} />))}
         </div>
       )}
     </div>
@@ -838,9 +842,28 @@ export function AgentMonitorPanel() {
   // workflow 内层 agent 同样要截断:一次 workflow 能起几十个内层 agent,跑完全留在
   // 列表里(用户实测 37 条堆满面板)。running 全留(在跑的一个都不能藏),终态
   // (done/idle)按最近活动时间取最近 10 条,与本地 Task 终态桶同一口径。
+  // r114:已经被阶段视图接管的 workflow,内层 agent 不必在这里再列一遍裸行 —— 阶段卡里
+  // 带 label / 阶段 / 耗时 / token,信息严格更多。判定【按 workflowId 逐个做】:用"当前是否
+  // 存在任意带进度表的条目"这种全局条件,会在同会话里 A 有进度、B 没有时把 B 的裸列表
+  // 一起藏掉。对应关系靠 agentId —— 进度表里出现过的 agentId 属于哪个 wf_ 目录,那个目录
+  // 整体就算已接管。
+  // 覆盖集只认【本次真正渲染出卡片的】那些工作流条目(= 上面桶里的,已按打开会话过滤 +
+  // 终态截 10 条):从全量 localAgents 算,会在卡片被挤出桶(同会话又结束了 10 个子代理)
+  // 或分屏收回后,卡片没了、裸行又被藏 —— 整个运行在面板里凭空消失。
+  const coveredWorkflowIds = new Set();
+  {
+    const seen = new Set();
+    for (const list of Object.values(buckets)) {
+      for (const a of list) {
+        if (a?.workflow && Array.isArray(a.wfProgress)) for (const e of a.wfProgress) if (e?.agentId) seen.add(e.agentId);
+      }
+    }
+    for (const a of wfAgents) if (a.workflowId && seen.has(a.id)) coveredWorkflowIds.add(a.workflowId);
+  }
+  const wfBare = wfAgents.filter((a) => !coveredWorkflowIds.has(a.workflowId));
   const wfShown = [
-    ...wfAgents.filter((a) => a.status === 'running'),
-    ...recentTerminal(wfAgents.filter((a) => a.status !== 'running')),
+    ...wfBare.filter((a) => a.status === 'running'),
+    ...recentTerminal(wfBare.filter((a) => a.status !== 'running')),
   ];
   // 后台代理(cliKind='bg')在 /agents/active 里是【只读条目】,存在的意义是给 app 级
   // 角标当廉价数据源;面板里它们由上面「后台代理 (claude --bg)」那一区呈现(带停止/查看

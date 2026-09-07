@@ -26,6 +26,11 @@ const app = readFileSync(join(root, 'client/src/App.jsx'), 'utf8');
     'options 必须开 forwardSubagentText,否则子代理的 text/thinking 根本不发到客户端');
   assert.ok(/agentProgressSummaries:\s*true/.test(seg),
     'options 必须开 agentProgressSummaries,否则 task_progress 不带 summary(子代理无进度描述)');
+  // r114(INTERFACE §F / §D1):第三个恒定开关。CLI 只认 true,没有"取消声明"的路径,
+  // 重初始化时该键会被归为 lost —— 每次新建 query() 都必须重新带上;放条件分支里 =
+  // 某些路径漏带 = 静默回到 fail-closed 的"interrupt 连后台助手一起杀"。
+  assert.ok(/perTaskStopAffordance:\s*true/.test(seg),
+    'options 必须声明 perTaskStopAffordance:true,否则按停止会连跨回合的后台子代理/工作流一起杀');
   // 两个开关都是布尔常量、对所有请求一致 —— 不得混进兼容键(会让常驻 MCP 进程无谓重开)。
   const compatKeyIdx = chat.indexOf('chatCompatKey');
   if (compatKeyIdx > 0) {
@@ -39,13 +44,23 @@ const app = readFileSync(join(root, 'client/src/App.jsx'), 'utf8');
 {
   const i = app.indexOf("subtype === 'task_progress'");
   assert.ok(i > 0, 'App.jsx 必须仍有 task_progress 分支');
-  const seg = app.slice(i, i + 500);
+  // r114(§F):窗口从 500 放宽到 1400 —— 工作流进度处理写在同一分支里,500 字符卡不住它。
+  const seg = app.slice(i, i + 1400);
   assert.ok(/event\.summary \|\| event\.description/.test(seg),
     'task_progress 必须优先取 summary(现在时的进度摘要),description 是静态派发描述');
   assert.ok(!/activeAgents\[event\.tool_use_id\]\?\.workflow/.test(seg),
     '守卫必须放宽:原来只更新 workflow 条目,普通子代理的 summary 被整条丢弃');
   assert.ok(/_st\.activeAgents\[event\.tool_use_id\]/.test(seg),
     '仍需条目存在性守卫:不得凭空 upsert 出一张没有来源的子代理卡');
+  // r114(§F / §B1-3):缺 workflow_progress ≠ 空表。实证 6 条 task_progress 里 4 条不带表,
+  // 兜底成 [] 会把已有进度整表清空 → 阶段视图每 10s 闪一次空白。
+  assert.ok(!/workflow_progress[^]{0,80}\?\?\s*\[\]/.test(seg),
+    '不得给 workflow_progress 兜底 ?? [](缺表 ≠ 空表)');
+  // r114(§F):新逻辑必须写在既有 desc 更新【之后】,别把普通子代理的 summary 挤掉。
+  const wfAt = seg.indexOf('workflow_progress');
+  const descAt = seg.search(/event\.summary \|\| event\.description/);
+  assert.ok(wfAt < 0 || descAt < wfAt,
+    '工作流进度处理必须排在既有 description 更新之后');
 }
 
 // ── 3. 主消息流零污染:带 parent_tool_use_id 的 assistant 必须分流后 continue ──

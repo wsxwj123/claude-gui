@@ -18,6 +18,7 @@ import { repairOfficialCompat } from '../utils/session-repair.js';
 import { contextTimeoutBudget, latestCountTokensOutcome } from '../utils/context-tokens.js';
 import { canonicalCwd } from '../utils/safe-path.js';
 import { GENUI_SECTION_TEXT } from '../utils/genui-section.js';
+import { projectWorkflowProgress } from '../utils/workflow-progress.js';
 import { broadcast, clients } from '../broadcast.js';
 import { recordDraftSessionBinding } from '../services/draft-session-bindings.js';
 import { cliSupportsFlag, cliSupportsSnapshotFlag, snapshotFlagOn, primeHelpCache } from '../utils/prompt-cache-env.js';
@@ -695,15 +696,42 @@ function makeInputQueue() {
   };
 }
 
+// r114:工作流进度消息(system/task_progress 带 workflow_progress)的整表投影。
+// 命中 → 返回投影后的【新消息对象】(原对象一个字不动);不是这类消息 → null。
+// 两个消费者:①消息泵投递前改写(SSE 拿到的是投影后的表);②deliverLine 的无监听 WS 兜底。
+// 投影 = 白名单,砍掉 promptPreview(写给助手的整段提示词原文)等,见 utils/workflow-progress.js。
+// (export 仅为可单测,同 matchOfficialEmptyBlockError。)
+export function projectWorkflowProgressMessage(m) {
+  if (!m || m.type !== 'system' || m.subtype !== 'task_progress') return null;
+  const progress = projectWorkflowProgress(m.workflow_progress);
+  // 缺 workflow_progress 的纯心跳(实证 6 条里 4 条不带)→ null → 原样透传。
+  // 绝不把缺失的表补成 []:缺表 ≠ 空表,补了会把前端已有的进度整表清空。
+  return progress ? { ...m, workflow_progress: progress } : null;
+}
+
 // 把一行消息送给 SSE:有活跃监听(已 attach)→ 实时写;否则回落 earlyLines 缓冲,
 // 供下次 /stream 重连回放(detach-don't-abort)。
 function deliverLine(slot, line) {
-  if (slot.listeners.size) { for (const fn of slot.listeners) { try { fn(line); } catch {} } }
+  // r114:工作流进度行(system/task_progress 带 workflow_progress)在【投递前】整表投影,
+  // 砍掉 promptPreview(写给助手的整段提示词原文)等白名单外的键。放在这里而不是调用处:
+  // 所有投递路径都从这一个口子出去,写在口子上才没有漏网的分支。只换 workflow_progress
+  // 一个键,其余字段原样;`line` 本身一个字不动(调用方的落盘/回放/detach 全走原文)。
+  let wfProgressMsg = null;
+  if (line.includes('workflow_progress')) {
+    try { wfProgressMsg = projectWorkflowProgressMessage(JSON.parse(line)); } catch {}
+  }
+  const outLine = wfProgressMsg ? JSON.stringify(wfProgressMsg) : line;
+  if (slot.listeners.size) { for (const fn of slot.listeners) { try { fn(outLine); } catch {} } }
   else {
-    if (slot.earlyLines.length < MAX_EARLY_LINES) slot.earlyLines.push(line);
-    // r68:溢出是静默丢尾。今天不画所以无感,但客户端一旦按快照"种回"正文,重放缺一段
-    // 就成了正文中段悄悄少一块 —— 比空窗更坏。置位,attach 回放前明说一声(见 /stream)。
-    else slot.earlyOverflowed = true;
+    // 工作流进度行是每 ~10s 一份的全量快照(73 助手档 45–125KB/条)。重放旧快照没有价值
+    // (下一份马上就到),却能把 5000 行的 earlyLines 撑到几百 MB 常驻 —— 故这类行
+    // 【不进缓冲】,只走下面的 WS 兜底。
+    if (!wfProgressMsg) {
+      if (slot.earlyLines.length < MAX_EARLY_LINES) slot.earlyLines.push(line);
+      // r68:溢出是静默丢尾。今天不画所以无感,但客户端一旦按快照"种回"正文,重放缺一段
+      // 就成了正文中段悄悄少一块 —— 比空窗更坏。置位,attach 回放前明说一声(见 /stream)。
+      else slot.earlyOverflowed = true;
+    }
     // 停止链路 #3 兜底:后台化子代理跨回合才完成时,权威终态 task_notification 到达的
     // 时刻往往没有活跃 SSE(per-turn 流已关)——只落 earlyLines 会被下条消息的
     // `s.earlyLines = []` 清掉(或无人再读),前端卡片永远"工作中"。此处额外走全局 WS
@@ -742,6 +770,22 @@ function deliverLine(slot, line) {
             console.warn(`[chat] prompt_suggestion 丢弃(无 SSE 监听且无 WS 客户端) session=${slot.sessionId || '-'}`);
           }
         }
+      } catch {}
+    }
+    // r114 同款兜底:工作流跨回合在后台跑时(用户已发下一条/关了流),per-turn SSE 早已
+    // 关闭,进度只能经全局 WS 送达 —— 否则回合一结束界面就再也不更新(实证:主回合
+    // result 之后 task_progress 仍持续到达父流)。SSE 在线时走上面的 if 分支不进这里,
+    // 不会双发;客户端只按 tool_use_id 命中已存在条目更新,不建新条目 → 不会串会话。
+    if (wfProgressMsg) {
+      try {
+        broadcast({
+          type: 'workflow-progress-bg',
+          sessionId: slot.sessionId || null,
+          tool_use_id: wfProgressMsg.tool_use_id || null,
+          task_id: wfProgressMsg.task_id || null,
+          workflow_progress: wfProgressMsg.workflow_progress,
+          ts: Date.now(),
+        });
       } catch {}
     }
   }
@@ -1534,6 +1578,12 @@ router.post('/chat', async (req, res) => {
     // 运行中的子代理每 ~30s 由其自身模型+缓存分叉出一句现在时进度描述,经 task_progress
     // 的 summary 字段发回(跑不满 30s 的子代理不出摘要,属正常)。
     agentProgressSummaries: true,
+    // r114:停止只停本回合派出的任务,跨回合还活着的后台子代理/工作流不被连带杀。
+    // 必须写在 options 字面量里(不是条件分支):CLI 只认 true、没有"取消声明"的路径,
+    // 重初始化时该键被归为 lost —— 每次新建 query() 都得重新带上;某条路径漏带就静默
+    // 回到 fail-closed 的"interrupt 杀光后台"。恒定常量,不进 chatCompatKey。
+    // 老 CLI(2.1.191)收到这个未知键实测不报错,故不设版本门。
+    perTaskStopAffordance: true,
     permissionMode: sdkPermMode,
     canUseTool: makeCanUseTool(slot),
     // MCP 服务器要用户填表(elicitation)。走与授权卡同一张挂起表 → 停止/进程退出的清卡
@@ -1818,6 +1868,16 @@ router.post('/chat', async (req, res) => {
               const t = slot.liveTasks.get(m.task_id);
               if (t) t.createdAt = Date.now();
             }
+          }
+          else if (m.subtype === 'task_progress' && Array.isArray(m.workflow_progress)) {
+            // G8:带进度表的 task_progress = 该任务确实还活着,刷新新鲜度(与上面 task_updated
+            // 非终态分支同款做法)。单独跑的工作流实测不再发 task_updated,
+            // background_tasks_changed 也只在起、止各一次 → 条目的 createdAt 永远停在起跑时刻,
+            // 超过 LIVE_TASK_FRESH_MS(30min)就被 idleReclaim 判陈旧、连对话进程一起关掉,
+            // 长工作流被连带杀死(卡片永远"运行中",停止只得到"回合已结束")。
+            // 只碰这一处簿记:不 finalize、不 abort、不关流、不改 kind/epoch、不新建条目。
+            const t = slot.liveTasks.get(m.task_id);
+            if (t) t.createdAt = Date.now();
           }
         }
         // 停止链路 #4(level 信号,CLI 2.1.220+):无顶层 task_id,故走独立分支。tasks 是

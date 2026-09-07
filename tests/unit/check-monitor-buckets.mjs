@@ -103,6 +103,18 @@ const agentsSrc = readFileSync(join(root, 'server/routes/agents.js'), 'utf8');
   assert.equal(wfShown.filter((a) => a.status === 'running').length, 3, '在跑的一个都不能藏');
   assert.equal(wfShown[3].id, 'd29', '终态按最近活动时间倒序');
   assert.ok(!wfShown.some((a) => a.id === 'd0'), '最老的终态条目退场');
+
+  // r114(§F / §C3):S7 裸列表要按 workflowId 逐个过滤 —— 只把"其 workflowId 对应的
+  // workflow 条目已有 wfProgress"的那些剔掉。用"当前是否存在任意带 wfProgress 的条目"
+  // 这种全局条件,会在同会话里 A 有进度、B 没有时把 B 的裸列表一起藏掉。
+  const wfIdx = [];
+  let q = panel.indexOf('wfProgress');
+  while (q >= 0) { wfIdx.push(q); q = panel.indexOf('wfProgress', q + 1); }
+  assert.ok(wfIdx.length > 0, '面板必须用 wfProgress 判断哪些内层 agent 已被分阶段视图接管');
+  for (const at of wfIdx) {
+    assert.ok(/workflowId/.test(panel.slice(Math.max(0, at - 250), at + 250)),
+      'wfProgress 判定必须按 workflowId 逐个过滤,不得用全局条件');
+  }
 }
 
 console.log('✓ check-monitor-buckets: 监控面板 alive 语义 + workflow 截断全过');
