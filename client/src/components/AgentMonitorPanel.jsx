@@ -847,11 +847,16 @@ export function AgentMonitorPanel() {
   // 存在任意带进度表的条目"这种全局条件,会在同会话里 A 有进度、B 没有时把 B 的裸列表
   // 一起藏掉。对应关系靠 agentId —— 进度表里出现过的 agentId 属于哪个 wf_ 目录,那个目录
   // 整体就算已接管。
+  // 覆盖集只认【本次真正渲染出卡片的】那些工作流条目(= 上面桶里的,已按打开会话过滤 +
+  // 终态截 10 条):从全量 localAgents 算,会在卡片被挤出桶(同会话又结束了 10 个子代理)
+  // 或分屏收回后,卡片没了、裸行又被藏 —— 整个运行在面板里凭空消失。
   const coveredWorkflowIds = new Set();
   {
     const seen = new Set();
-    for (const a of Object.values(localAgents)) {
-      if (a?.workflow && Array.isArray(a.wfProgress)) for (const e of a.wfProgress) if (e?.agentId) seen.add(e.agentId);
+    for (const list of Object.values(buckets)) {
+      for (const a of list) {
+        if (a?.workflow && Array.isArray(a.wfProgress)) for (const e of a.wfProgress) if (e?.agentId) seen.add(e.agentId);
+      }
     }
     for (const a of wfAgents) if (a.workflowId && seen.has(a.id)) coveredWorkflowIds.add(a.workflowId);
   }
