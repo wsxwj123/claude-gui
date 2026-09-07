@@ -196,39 +196,45 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   const openAgent = (entry) => {
     if (!entry?.agentId || typeof onOpenAgent !== 'function') return;
     const key = 'agent-' + entry.agentId;
-    const st = useStore.getState();
-    if (!st.activeAgents[key]) {
-      st.upsertAgent(key, {
-        // hydrated:这条是为了看转写现补的,不进监控桶、不被 level 剪枝。
-        hydrated: true,
-        wfInner: true,
-        name: clip(entry.label, 80) || entry.agentId,
-        agentType: entry.agentType || null,
-        model: entry.model || null,
-        description: clip(entry.lastToolSummary) || '',
-        status: HYDRATE_STATUS[agentDisplayState(entry, effStatus)] || 'stopped',
-        startedAt: Number.isFinite(entry.startedAt) ? entry.startedAt : Date.now(),
-        sessionId: ownerSessionId || null,
-      });
-      const hash = ref?.projectHash;
-      if (hash) {
-        fetch(`/api/sessions/${encodeURIComponent(key)}/messages?projectHash=${encodeURIComponent(hash)}`)
-          .then((r) => (r.ok ? r.json() : null))
-          .then((d) => {
-            const msgs = Array.isArray(d) ? d : (d?.messages || []);
-            const text = []; const thinking = []; const toolCalls = [];
-            for (const m of msgs) {
-              if (m.type !== 'turn') continue;
-              if (Array.isArray(m.thinking)) thinking.push(...m.thinking);
-              if (Array.isArray(m.text)) text.push(...m.text);
-              if (Array.isArray(m.toolCalls)) toolCalls.push(...m.toolCalls);
-            }
-            if (text.length || thinking.length || toolCalls.length) {
-              useStore.getState().upsertAgent(key, { text, thinking, toolCalls });
-            }
-          })
-          .catch(() => {});
-      }
+    const prev = useStore.getState().activeAgents[key];
+    // 每次点开都按当前进度表刷新派生字段:全仓没有别的写入方(内层助手不流经父流),
+    // 只在条目不存在时写一次 = 在跑时点开过的助手,跑完再点仍显示"工作中"并一直计时。
+    useStore.getState().upsertAgent(key, {
+      // hydrated:这条是为了看转写现补的,不进监控桶、不被 level 剪枝。
+      hydrated: true,
+      wfInner: true,
+      name: clip(entry.label, 80) || entry.agentId,
+      agentType: entry.agentType || null,
+      model: entry.model || null,
+      description: clip(entry.lastToolSummary) || '',
+      status: HYDRATE_STATUS[agentDisplayState(entry, effStatus)] || 'stopped',
+      startedAt: Number.isFinite(entry.startedAt) ? entry.startedAt : (prev?.startedAt ?? Date.now()),
+      sessionId: ownerSessionId || null,
+    });
+    // 转写只在还没取到内容时取:已经取到就不重复请求;此前没取到(含 projectHash 缺失
+    // 导致压根没发过)则允许再取一次。
+    const hasContent = !!(prev?.blocks?.length || prev?.text?.length || prev?.toolCalls?.length);
+    const hash = ref?.projectHash;
+    if (!hasContent && hash) {
+      fetch(`/api/sessions/${encodeURIComponent(key)}/messages?projectHash=${encodeURIComponent(hash)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const msgs = Array.isArray(d) ? d : (d?.messages || []);
+          const text = []; const thinking = []; const toolCalls = []; const blocks = [];
+          for (const m of msgs) {
+            if (m.type !== 'turn') continue;
+            if (Array.isArray(m.thinking)) thinking.push(...m.thinking);
+            if (Array.isArray(m.text)) text.push(...m.text);
+            if (Array.isArray(m.toolCalls)) toolCalls.push(...m.toolCalls);
+            // blocks 是对话视图真正渲染的那份(有序 {type,content|toolCall}[]);只写三个
+            // 扁平数组 = 点开内层助手永远空白(SubagentView 读 agent.blocks,兜底 result)。
+            if (Array.isArray(m.blocks)) blocks.push(...m.blocks);
+          }
+          if (text.length || thinking.length || toolCalls.length || blocks.length) {
+            useStore.getState().upsertAgent(key, { text, thinking, toolCalls, blocks });
+          }
+        })
+        .catch(() => {});
     }
     onOpenAgent(key);
   };
