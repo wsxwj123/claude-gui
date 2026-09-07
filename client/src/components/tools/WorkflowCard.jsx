@@ -127,13 +127,19 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   const runStatus = runDisplayStatus(agent);
   const { ref, taskId } = resolveRunRef({ toolCall, agent });
 
-  // 快照只在【非运行中】取一次:live 还在跑时读快照 = 读到上一轮续跑覆写的记录,
-  // 界面会谎称"已完成"。失败静默(不弹窗、不重试),降级链自会退到 live 定格。
+  // 快照只在【非运行中】取:live 还在跑时读快照 = 读到上一轮续跑覆写的记录,界面会谎称
+  // "已完成"。失败静默(不弹窗),但要把"已请求"复位 —— 用户点停止那条路必然赶在快照
+  // 写盘之前发出请求,拿到 404 后若永久记成"已问过",本次挂载再也不取,结果与报错区
+  // (只在 source==='snapshot' 时渲染)整场都出不来。复位只是允许【后续依赖变化】
+  // (权威终态到达等)重新触发:同一份依赖不会因失败立即重发,不轮询、不自旋。
   useEffect(() => {
     if (askedRef.current || !ref || runStatus === 'running') return;
     askedRef.current = true;
     let alive = true;
-    getWorkflowSnapshot(ref).then((s) => { if (alive && s) setSnapshot(s); });
+    getWorkflowSnapshot(ref).then((s) => {
+      if (!s) { askedRef.current = false; return; }
+      if (alive) setSnapshot(s);
+    });
     return () => { alive = false; };
   }, [ref?.runId, ref?.projectHash, ref?.sid, runStatus]);
 
