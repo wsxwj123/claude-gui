@@ -99,7 +99,7 @@ import {
   Archive, ArchiveRestore, Trash2, EyeOff, Columns2, Smartphone, Pencil, Type, Palette,
   Menu, SquarePen, Gauge, Cpu, CheckCircle2, BookText, Sparkles, HelpCircle, Pin,
   Download, ClipboardCopy, LayoutGrid, MoreHorizontal, Star, Puzzle,
-  Image as ImageIcon, Paperclip,
+  Image as ImageIcon, Paperclip, Send,
 } from './components/Icon.jsx';
 import { buildFontEntries, groupFonts, detectFonts, platformCandidates, queryLocalFontFamilies } from './utils/systemFonts.js';
 import { copyText } from './utils/clipboard.js';
@@ -2148,7 +2148,7 @@ function HomeState({ tabIndex = 0 }) {
               type="button"
               data-testid="home-attachment-add"
               onClick={() => homeFileInputRef.current?.click()}
-              className="h-7 w-7 rounded-md hover:bg-black/5 text-ink-muted hover:text-accent flex items-center justify-center transition-colors"
+              className="shrink-0 h-7 w-7 rounded-md hover:bg-black/5 text-ink-muted hover:text-accent flex items-center justify-center transition-colors"
               title="添加附件（可多选）"
               aria-label="添加附件"
             >
@@ -2167,11 +2167,14 @@ function HomeState({ tabIndex = 0 }) {
                     openProjectListbox(event.key);
                   }
                 }}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-canvas-deep/70 hover:bg-canvas-warm text-[12px] text-ink-soft font-body min-w-0 transition-colors"
+                className="flex w-full items-center gap-1.5 px-2 py-1 rounded-md border border-canvas-deep/70 hover:bg-canvas-warm text-[12px] text-ink-soft font-body min-w-0 transition-colors"
                 title={project ? formatPath(project.path) : '选择项目'}
               >
                 <FolderOpen size={12} className="text-ink-faint shrink-0" />
-                <span className="truncate max-w-[220px]">{project ? formatPathShort(project.path) : '选择项目'}</span>
+                {/* r115:项目名是这一行里唯一该让步的元素(其余都是定宽控件)。原来只有一个
+                    max-w-[220px] 上限,手机上 220px 仍然超过剩余空间 → 名字整条画出去、
+                    盖住发送键。min-w-0 让它在 flex 里真的能被压缩,truncate 才会生效。 */}
+                <span className="truncate min-w-0 max-w-[220px]">{project ? formatPathShort(project.path) : '选择项目'}</span>
                 <ChevronDown size={11} className="text-ink-faint shrink-0" />
               </button>
               <AnchoredPopover anchorRef={projBtnRef} open={projOpen}
@@ -2200,13 +2203,19 @@ function HomeState({ tabIndex = 0 }) {
                 </button>
               </AnchoredPopover>
             </div>
+            {/* r115:与会话内发送键同款圆形图标键(ChatInput 的 send-btn)。
+                原来是「发送」二字的文字按钮且没有 shrink-0 —— 手机上这一行放不下时它被压成
+                约 24px 宽,两个字竖排还盖在项目名上(用户实测截图)。图标按钮宽高固定,
+                字体调大也只是图标跟着大,永远不会挤出文字换行。 */}
             <button
               data-testid="home-send"
               onClick={submit}
               disabled={!!attachmentBlockReason(attachments) || (!text.trim() && attachments.length === 0) || !project}
-              className="ml-auto btn-accent px-3 py-1.5 text-[12.5px] font-body disabled:opacity-40"
+              className="ml-auto btn-accent shrink-0 w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-40"
+              title="发送"
+              aria-label="发送"
             >
-              发送
+              <Send size={14} className="text-white -mr-0.5" />
             </button>
           </div>
           {/* r97:与会话内同一套斜杠命令 / @ 引用。首页 composer 垂直居中,向上弹会被顶栏
