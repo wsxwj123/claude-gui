@@ -27,8 +27,13 @@ function workflowRunOf(toolUseResult, content) {
   // 正文兜底只在正文里真有 workflows 路径段时才跑正则:runId 必须来自 `workflows/wf_…`
   // (契约也要求"正文能解析出 runId"才兜底),这个前置判据不改变结果,但省掉了对每条
   // 普通 Bash/Read 结果的三遍白扫(大会话几千条 tool_result)。
-  const fromText = (!isWorkflow || !tur.runId) && content.includes('workflows')
-    ? parseWorkflowLaunchText(content) : null;
+  // 正文先归一为字符串:缺 content 的 tool_result 传进来的是 undefined(上游 JSON.stringify
+  // 对 undefined 返回 undefined),直接调字符串方法会抛 TypeError,且这条路径外层没有
+  // try/catch → 一条坏块让整个会话历史 500。归一后它与"正文里没有 workflows"同路,
+  // 不加 workflowRun、其余字段照给(与本轮改动前对同一记录的行为一致)。
+  const text = typeof content === 'string' ? content : '';
+  const fromText = (!isWorkflow || !tur.runId) && text.includes('workflows')
+    ? parseWorkflowLaunchText(text) : null;
   if (!isWorkflow && !fromText?.runId) return null;
   const dir = tur?.transcriptDir || fromText?.transcriptDir || null;
   const loc = parseWorkflowTranscriptDir(dir);
