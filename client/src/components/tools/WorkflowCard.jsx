@@ -62,9 +62,11 @@ function fmtDuration(ms) {
   const s = Math.floor(ms / 1000);
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
-// 助手耗时:终态取 CLI 算好的 durationMs;没有 durationMs 时只有【整个运行还在跑】才按
-// 当前时间现算 —— 历史卡片里 startedAt 是几个月前那次运行的时刻,减出来是"距那次运行过
-// 了多久"(几百分钟且每次重渲还在涨),不是耗时。
+// 助手耗时:终态取 CLI 算好的 durationMs;没有 durationMs 时只有【这一行自己还在跑】才按
+// 当前时间现算 —— 门若用整个运行的状态,已经结束但 CLI 没给 durationMs 的行(实证:
+// cached:true 的缓存命中行一律无 durationMs,startedAt ≈ 整个运行的起点)会在运行期间显示
+// 一个从运行起点起算、一直增长的假耗时(实测 42m,比任何真跑的助手都长);历史卡片里
+// startedAt 更是几个月前那次运行的时刻,减出来是"距那次运行过了多久",不是耗时。
 // 不挂每秒定时器 —— 一次工作流最多渲 200 行,每秒重渲整卡不值当;进度表本身每 10s
 // 到一次,届时自然刷新。
 function agentDuration(entry, isRunning) {
@@ -73,10 +75,11 @@ function agentDuration(entry, isRunning) {
   return null;
 }
 
-function AgentRow({ entry, index, state, onOpen, compact, runActive = false }) {
+function AgentRow({ entry, index, state, onOpen, compact }) {
   const label = clip(entry?.label) || `助手 ${index + 1}`;
   const tokens = fmtTokens(entry?.tokens);
-  const dur = agentDuration(entry, runActive);
+  // 现算耗时的门 = 这一行自己的显示态在活跃态里,不是整个运行在不在跑。
+  const dur = agentDuration(entry, ACTIVE_STATES.has(state));
   const lastTool = clip(entry?.lastToolSummary || entry?.lastToolName, 200);
   const openable = !!entry?.agentId && typeof onOpen === 'function';
   return (
@@ -321,7 +324,6 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
                         index={i}
                         state={agentDisplayState(a, effStatus)}
                         compact={compact}
-                        runActive={runActive}
                         onOpen={() => openAgent(a)}
                       />
                     ))}
