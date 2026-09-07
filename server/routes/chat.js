@@ -1869,6 +1869,16 @@ router.post('/chat', async (req, res) => {
               if (t) t.createdAt = Date.now();
             }
           }
+          else if (m.subtype === 'task_progress' && Array.isArray(m.workflow_progress)) {
+            // G8:带进度表的 task_progress = 该任务确实还活着,刷新新鲜度(与上面 task_updated
+            // 非终态分支同款做法)。单独跑的工作流实测不再发 task_updated,
+            // background_tasks_changed 也只在起、止各一次 → 条目的 createdAt 永远停在起跑时刻,
+            // 超过 LIVE_TASK_FRESH_MS(30min)就被 idleReclaim 判陈旧、连对话进程一起关掉,
+            // 长工作流被连带杀死(卡片永远"运行中",停止只得到"回合已结束")。
+            // 只碰这一处簿记:不 finalize、不 abort、不关流、不改 kind/epoch、不新建条目。
+            const t = slot.liveTasks.get(m.task_id);
+            if (t) t.createdAt = Date.now();
+          }
         }
         // 停止链路 #4(level 信号,CLI 2.1.220+):无顶层 task_id,故走独立分支。tasks 是
         // 【当前全部存活后台任务】的全量快照,官方语义 "replace their set with each payload"
