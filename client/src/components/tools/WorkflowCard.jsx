@@ -82,12 +82,16 @@ function AgentRow({ entry, index, state, onOpen, compact }) {
   // 现算耗时的门 = 这一行自己的显示态在活跃态里,不是整个运行在不在跑。
   const dur = agentDuration(entry, ACTIVE_STATES.has(state));
   const lastTool = clip(entry?.lastToolSummary || entry?.lastToolName, 200);
+  // 可点 = 有 agentId 且【挂点真的给了打开回调】(监控面板刻意不给:那里拿不到
+  // projectHash,点开只会是空视图)。不可点时不给 role/tabIndex/手型/"点击查看"提示,
+  // 免得每行都是骗点的死按钮,还成了 Tab 的死停靠点。
   const openable = !!entry?.agentId && typeof onOpen === 'function';
   return (
     <div
       role={openable ? 'button' : undefined}
       tabIndex={openable ? 0 : undefined}
       onClick={openable ? onOpen : undefined}
+      onKeyDown={openable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(e); } } : undefined}
       title={openable ? `${label}\n点击查看该助手的完整对话` : label}
       className={`flex items-center gap-2 px-2 py-1 rounded-md text-[11px] font-body transition-colors ${
         openable ? 'cursor-pointer hover:bg-canvas-warm' : ''
@@ -337,7 +341,7 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
                         index={i}
                         state={agentDisplayState(a, effStatus)}
                         compact={compact}
-                        onOpen={() => openAgent(a)}
+                        onOpen={typeof onOpenAgent === 'function' ? () => openAgent(a) : null}
                       />
                     ))}
                     {!full && g.agents.length > quota && (
