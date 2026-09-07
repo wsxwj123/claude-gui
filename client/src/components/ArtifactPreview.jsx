@@ -9,6 +9,7 @@ import {
   normalizePreviewErr, formatPreviewErrors, resolvePreviewErrLine,
 } from '../utils/previewErrors.js';
 import { makeModePersist } from '../utils/previewMode.js';
+import { createOffscreenHost } from '../genui/host/host-zoom.ts';
 
 // BH-1b: 桌面端把"全屏"升级成右侧 dock,移动端无横向空间仍走全屏遮罩。
 function isMobileViewport() {
@@ -172,7 +173,13 @@ export function MermaidView({ code }) {
     let cancelled = false;
     if (!code.trim()) { setSvg(''); setErr(''); return; }
     loadMermaid()
-      .then((mermaid) => mermaid.render(id, code))
+      // 传离屏容器而不是让 mermaid 自己在 body 上建:容器里抵消了界面缩放,否则
+      // mermaid 的折行判据(rect.width === 200)在 zoom≠1 时永不成立,长标签不折行
+      // 被裁。与 genui 的 mermaid 走同一个修法,见 genui/host/host-zoom.ts。
+      .then((mermaid) => {
+        const host = createOffscreenHost();
+        return mermaid.render(id, code, host).finally(() => host.remove());
+      })
       .then(({ svg }) => { if (!cancelled) { setSvg(svg); setErr(''); } })
       .catch((e) => { if (!cancelled) setErr(e?.message || '图表渲染失败'); });
     return () => { cancelled = true; };

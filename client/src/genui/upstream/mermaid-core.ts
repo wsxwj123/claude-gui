@@ -19,6 +19,9 @@ import { assertSafeSvg, ensureFlowchartKind, repairMermaidSource } from './merma
 // CGUI-PATCH: 上游按 documentElement.style.colorScheme 判明暗,本仓从不设该属性
 // (SPIKE V7:34 个主题变体实测恒为空串)⟹ 照抄的话 genui 的 mermaid 恒定浅色。
 import { hostPrefersDark } from '../host/host-theme.ts'
+// CGUI-PATCH:界面缩放会污染 mermaid 的折行判据,测量容器需就地抵消(见 renderInto)。
+// 经 host/ 转手:upstream/ 不许直接伸手拿 utils/(PLAN §2.0.1-2)。
+import { neutralizeHostZoom } from '../host/host-zoom.ts'
 
 let mermaidPromise: Promise<typeof import('mermaid')> | null = null
 
@@ -74,6 +77,11 @@ async function renderInto(m: typeof import('mermaid'), id: string, code: string,
   container.style.left = '-100000px'
   container.style.top = '0'
   container.style.margin = '0'
+  // CGUI-PATCH:抵消 <html> 上的界面缩放。mermaid 判断标签要不要折行的判据是
+  // 「rect.width === wrappingWidth」(dist 的 addHtmlSpan:相等才切 break-spaces),
+  // 而 zoom≠1 会把 rect 宽整体放大(200×1.2=240),等式永远不成立 → 长标签停在
+  // white-space:nowrap + max-width:200px,超出部分被节点框裁掉。详见 host-zoom.ts。
+  neutralizeHostZoom(container)
   document.body?.appendChild(container)
   try {
     const { svg } = await m.default.render(id, code, container)
