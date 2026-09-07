@@ -117,7 +117,6 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   const agent = resolveOwnedAgent(useStore((s) => s.activeAgents[toolUseId]), ownerSessionId);
   const [snapshot, setSnapshot] = useState(null);
   const askedRef = useRef(false);
-  const foldDefaults = useRef(new Map());
   const [override, setOverride] = useState(() => new Map());
   const [showAll, setShowAll] = useState(() => new Set());
   const [resultFull, setResultFull] = useState(false);
@@ -225,8 +224,11 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
     onOpenAgent(key);
   };
 
-  // 展开态 = 用户设定 ?? 首次见到该阶段时算出的默认值(算完冻住)。每 10s 一份新进度
-  // 表既不能把用户折起来的阶段重新弹开,也不该在阶段跑完那一刻自己收起。
+  // 展开态每次渲染现算,用户手点过的阶段(override)恒最高优先。
+  // 不缓存"首次见到该阶段时的默认值":CLI 的第一份进度表就把全部阶段预告完(连零助手的
+  // 收尾阶段都在表里),冻住默认值等于除第 1 阶段外全程折叠,"终态展开最后一个阶段"在
+  // 实时卡片上永远轮不到。现算的代价是后来开跑的阶段会自动展开 —— 那正是想要的;而
+  // override 保证用户折起来的阶段不会被进度表弹开,展开的阶段也不会在跑完那刻自己收起。
   const anyActive = groups.some((g) => g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, effStatus))));
   // 全终态时展开最后【一个派过助手的】阶段:阶段是开跑前就全量预告的,收尾时的最后
   // 一组常常是没派出助手的空阶段,展开它等于把真正有结果的那组藏起来。
@@ -234,11 +236,8 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
   const lastKey = (withAgents.length ? withAgents[withAgents.length - 1] : groups[groups.length - 1])?.key ?? null;
   const isOpen = (g) => {
     if (override.has(g.key)) return override.get(g.key);
-    if (!foldDefaults.current.has(g.key)) {
-      const active = g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, effStatus)));
-      foldDefaults.current.set(g.key, active || (!anyActive && g.key === lastKey));
-    }
-    return foldDefaults.current.get(g.key);
+    if (g.agents.some((a) => ACTIVE_STATES.has(agentDisplayState(a, effStatus)))) return true;
+    return !anyActive && g.key === lastKey;
   };
   const toggle = (key, open) => setOverride((p) => { const n = new Map(p); n.set(key, !open); return n; });
 
