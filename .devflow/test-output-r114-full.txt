@@ -1,5 +1,5 @@
-# r114 验收全量测试完整输出(第 2 轮;worktree HEAD f8f7af5c,锁定 3edf6c39);tests/unit 全部 check-*.mjs 逐文件 node <file>,每文件保留末 12 行 stdout+stderr,末尾 exit=<code>;最后附 client eslint。跑测试期间无任何沙箱服务占用 6703–6709。
-# 生成:2026-09-06 23:40:05
+# r114 验收全量测试完整输出(第 3 轮,含抽查必修 G1–G9;worktree HEAD 444b7e9b,锁定 3edf6c39);tests/unit 全部 check-*.mjs 逐文件 node <file>,每文件保留末 12 行,末尾 exit=<code>;最后附 client eslint。跑测试期间无任何沙箱服务占用 6703–6709。
+# 生成:2026-09-07 10:17:41
 
 ===== check-1m-toggle =====
 check-1m-toggle: all assertions passed
@@ -167,7 +167,7 @@ exit=0
 
 ===== check-flat-tokens =====
 check-flat-tokens: all passed
-(node:20991) Warning: `--localstorage-file` was provided without a valid path
+(node:53976) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -177,7 +177,7 @@ exit=0
 
 ===== check-fork-agent-ownership =====
 PASS check-fork-agent-ownership
-(node:21012) Warning: `--localstorage-file` was provided without a valid path
+(node:53992) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -456,7 +456,7 @@ exit=0
 
 ===== check-pane-ownership =====
 check-pane-ownership: all assertions passed
-(node:23466) Warning: `--localstorage-file` was provided without a valid path
+(node:56119) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -823,6 +823,17 @@ exit=0
    [修前应绿] 8 条(现在绿 8 / 红 0)
 exit=0
 
+===== check-r114c-reader-guard =====
+
+G9 历史接线对缺 content 的 tool_result 的容忍
+  ✓ G9-1 缺 content 的 tool_result:整段历史读取不抛(改前 TypeError → 会话 500)
+  ✓ G9-2 缺 content 的结果不加 workflowRun,其余字段照给
+  ✓ G9-3 控制组:字符串正文的工作流仍走兜底,workflowRun 照出
+  ✓ G9-4 控制组:块数组正文(非字符串)序列化后仍能兜底
+
+通过 4 / 失败 0
+exit=0
+
 ===== check-r26-access-denied =====
 ✓ check-r26-access-denied(E6):26 条断言全过
 exit=0
@@ -1021,13 +1032,13 @@ check-r26-i9-same-row-titles: all passed
 exit=0
 
 ===== check-r26-import-inline-exdev =====
-[skins] import-inline failed: Error: ENOTDIR: not a directory, mkdir '/var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r26-d4-unit-X3IOQe/.claude-gui/skins'
+[skins] import-inline failed: Error: ENOTDIR: not a directory, mkdir '/var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r26-d4-unit-latCpT/.claude-gui/skins'
     at async mkdir (node:internal/fs/promises:1501:10)
     at async file:///Users/wsxwj/Desktop/claude/claude%20gui-worktrees/r114-workflow-ui/server/routes/skins-packs.js:450:7 {
   errno: -20,
   code: 'ENOTDIR',
   syscall: 'mkdir',
-  path: '/var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r26-d4-unit-X3IOQe/.claude-gui/skins'
+  path: '/var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r26-d4-unit-latCpT/.claude-gui/skins'
 }
 PASS check-r26-import-inline-exdev
 exit=0
@@ -1276,7 +1287,7 @@ exit=0
 
 ===== check-r31-ios-regex =====
 PASS check-r31-ios-regex
-(node:29182) Warning: `--localstorage-file` was provided without a valid path
+(node:60617) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -1317,8 +1328,8 @@ exit=0
 exit=0
 
 ===== check-r33-draft-binding-route =====
-[draft-session-bindings] malformed index quarantined: /var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r33-binding-route-HmdaZT/.claude-gui/draft-session-bindings.json.corrupt-1788709370392
-[draft-session-bindings] optional merge skipped (EACCES): EACCES: permission denied, open '/var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r33-binding-route-HmdaZT/.claude-gui/draft-session-bindings.json'
+[draft-session-bindings] malformed index quarantined: /var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r33-binding-route-ae5PXa/.claude-gui/draft-session-bindings.json.corrupt-1788747637002
+[draft-session-bindings] optional merge skipped (EACCES): EACCES: permission denied, open '/var/folders/zx/7q01m54d2cj8qdv6kpd698080000gn/T/cgui-r33-binding-route-ae5PXa/.claude-gui/draft-session-bindings.json'
 ✓ check-r33-draft-binding-route: missing/malformed/EACCES均200，正常映射水合全过
 exit=0
 
@@ -1364,7 +1375,7 @@ exit=0
 exit=0
 
 ===== check-r33-sidecar-retry =====
-(node:30260) Warning: `--localstorage-file` was provided without a valid path
+(node:61141) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 ✓ check-r33-sidecar-retry: 持久恢复、503保留、串行并发、quota与大preview边界全过
 exit=0
@@ -1763,7 +1774,7 @@ exit=0
 
 ===== check-session-access-error =====
 check-session-access-error: all passed (r17-4 + r22 真跑 reducer)
-(node:34905) Warning: `--localstorage-file` was provided without a valid path
+(node:62604) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -1809,7 +1820,7 @@ exit=0
 
 ===== check-skin-client =====
 check-skin-client: all passed
-(node:35270) Warning: `--localstorage-file` was provided without a valid path
+(node:62695) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -1823,7 +1834,7 @@ exit=0
 
 ===== check-skin-ui =====
 check-skin-ui: all passed
-(node:35362) Warning: `--localstorage-file` was provided without a valid path
+(node:62742) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
@@ -1861,7 +1872,7 @@ exit=0
 
 ===== check-stop-single-task =====
 PASS check-stop-single-task
-(node:35505) Warning: `--localstorage-file` was provided without a valid path
+(node:62822) Warning: `--localstorage-file` was provided without a valid path
 (Use `node --trace-warnings ...` to show where the warning was created)
 exit=0
 
