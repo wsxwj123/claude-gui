@@ -4,6 +4,7 @@ import { useStore } from '../../stores/sessionStore.js';
 import { resolveOwnedAgent } from '../../utils/agentOwner.js';
 import { confirmDialog } from '../../utils/confirmDialog.jsx';
 import { ElapsedTime } from '../LoadingBits.jsx';
+import { stopNoOwnerNotice } from './TaskCard.jsx';
 import {
   agentDisplayState, effectiveRunStatus, getWorkflowSnapshot, groupWorkflowPhases,
   phaseRowQuota, resolveRunRef, runDisplayStatus, selectWorkflowSource,
@@ -184,10 +185,10 @@ function WorkflowCardImpl({ toolUseId, ownerSessionId = null, toolCall = null, f
     const ok = await confirmDialog('停止整个工作流?正在运行的助手会被中止,已完成的结果保留。', { danger: true });
     if (!ok) return;
     const r = await useStore.getState().stopSingleTask(ownerSessionId || agent?.sessionId || null, toolUseId);
-    if (r?.stopped) return;   // 权威终态随后到达,无需额外提示
-    confirmDialog(r?.procAlive
-      ? '工作流已不在运行任务表中(可能已结束或进程已回收)'
-      : '本回合的对话进程已结束,无法再从这里停止工作流。', { confirmText: '知道了' });
+    // 只有服务端明说"任务表里没有这个属主"(noOwner)才提示。用 !r?.stopped 当判据会把
+    // 网络失败(同样返回 stopped:false)说成"对话进程已结束,无法再停止",而进程其实活着 ——
+    // 用户以为停不掉就放弃重试。文案与 TaskCard / SubagentView 共用同一个函数。
+    if (r?.noOwner) confirmDialog(stopNoOwnerNotice(r.procAlive), { confirmText: '知道了' });
   };
 
   // 点开单个助手看完整对话:复用既有子代理视图链路(store 键 'agent-<agentId>' +
